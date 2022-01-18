@@ -4,7 +4,6 @@
 
 #### To do
 
-To do:
 
 - [ ] (Alexandre&Min) Adaptive HR methods,
 
