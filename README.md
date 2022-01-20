@@ -5,6 +5,6 @@
 #### To do
 
 
-- [ ] (Alexandre&Min) Adaptive HR methods,
+- [ ] (Roy&Min) Adaptive HR methods,
 
-- [ ] (Roy&Pierre) Modal synthesis of the guitar using U-K formulation.
+- [ ] (Alexandre&Pierre) Modal synthesis of the guitar using U-K formulation.
