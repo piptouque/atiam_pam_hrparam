@@ -11,8 +11,10 @@
             "console": "integratedTerminal",
             "program": "${cwd}/source/synth_uk.py",
             "args": [
-                "--config",
-                "${cwd}/source/config/guitar_config.json"
+                "--string",
+                "${cwd}/source/data/guitar_string_config.json",
+                "--body",
+                "${cwd}/source/data/guitar_body_data.csv"
             ]
         }
     ]
