@@ -43,6 +43,19 @@ class GuitarStringData:
         self.eta_a = eta_a
         self.eta_b = eta_b
 
+        self._param_dict = {
+            'l': self.l,
+            't': self.t,
+            'rho': self.rho,
+            'e': self.e,
+            'i': self.i,
+            'eta_f': self.eta_f,
+            'eta_a': self.eta_a,
+            'eta_b': self.eta_b,
+            'c_t': self.c_t,
+            'b': self.b
+        }
+
     @ property
     def c_t(self) -> float:
         """Transverse wave propagation velocity (m/s)
@@ -73,6 +86,13 @@ class GuitarBodyData:
             self.f_n = np.array(self.f_n)
             self.ksi_n = np.array(self.ksi_n)
             self.m_n = np.array(self.m_n)
+
+        self._param_dict = {
+            'n': self.n,
+            'f_n': self.f_n,
+            'ksi_n': self.ksi_n,
+            'm_n': self.m_n
+        }
 
 
 class Excitation:

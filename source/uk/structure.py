@@ -3,17 +3,11 @@ import copy
 import numpy as np
 import numpy.typing as npt
 import scipy.integrate as integrate
-from itertools import chain
 
 from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
 
-import pandas as pd
-import json
-import argparse
-
-from .data import GuitarStringData, GuitarBodyData, Excitation, AFloat, AInt, ACallableFloat
-from ..util import make_modetime_dataframe, load_data_json, load_data_csv
+from uk.data import GuitarStringData, GuitarBodyData, Excitation, AFloat, AInt, ACallableFloat
 
 
 class ModalStructure:
@@ -217,11 +211,19 @@ class GuitarString(ModalStructure):
 
 
 class CouplingSolver:
-    def __init__(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]]) -> None:
-        self.structs = structs
-        self.ext_forces = ext_forces
+    def __init__(self, nb_modes: int, nb_steps: int, h: float) -> None:
+        self.n = np.arange(nb_modes)
+        self.nb_steps = nb_steps
+        self.h = h
 
-    def solve_constraints(a_ns: List[List[npt.NDArray[float]]], b_ns: List[npt.NDArray[float]]) -> List[List[npt.NDArray[float]]]:
+        self._param_dict = {
+            'n': self.n,
+            'nb_steps': self.nb_steps,
+            'h': h
+        }
+
+    @staticmethod
+    def solve_constraints(structs: List[ModalStructure], a_ns: List[List[npt.NDArray[float]]], b_ns: List[npt.NDArray[float]]) -> List[List[npt.NDArray[float]]]:
         """
         For now, a_ns, b_ns are constants in time.
         a_ns[i] are the list of constraints applied on sub-structure i.
@@ -232,121 +234,57 @@ class CouplingSolver:
             b_ns (List[npt.NDArray[float]]): [description]
             n (AInt): [description]
         """
-        assert len(a_ns) == len(self.structs) and \
-            len(b_ns) == len(self.structs)
+        assert len(a_ns) == len(structs) and \
+            len(b_ns) == len(structs)
         #
         a_mat = np.array(a_ns)
         b_vec = np.array(b_ns)
 
         m_halfinv_mat = np.diag(chain.from_iterable(
-            [np.pow(struct.m_n(n), -0.5) for struct in self.structs]))
+            [np.pow(struct.m_n(self.n), -0.5) for struct in structs]))
         #
         b_mat = a_mat @ m_halfinv_mat
         b_plus_mat = np.linalg.pinv(b_mat)
         w_mat = 1 - m_halfinv_mat * b_plus_mat * a_mat
         return None
 
-    def solve(self, q_n_is: List[AFloat], dq_n_is: List[AFloat], n: AInt, nb_steps: int, h: float) -> Tuple[List[npt.NDArray[AFloat]]]:
+    def solve(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat]) -> Tuple[List[npt.NDArray[AFloat]]]:
+        assert len(structs) == len(ext_forces) and len(
+            structs) == len(q_n_is) and len(structs) == len(dq_n_is)
+
         def make_vec():
-            if np.ndim(n) != 0:
-                return [np.zeros(n.shape + (nb_steps,), dtype=float)
-                        for i in range(len(self.structs))]
+            if np.ndim(self.n) != 0:
+                return [np.zeros(self.n.shape + (self.nb_steps,), dtype=float)
+                        for i in range(len(structs))]
             else:
-                return [np.zeros((nb_steps,), dtype=float) for i in range(len(self.structs))]
+                return [np.zeros((self.nb_steps,), dtype=float) for i in range(len(structs))]
         q_ns = make_vec()
         dq_ns = make_vec()
         ddq_ns = make_vec()
         ddq_u_ns = make_vec()
         dq_half_ns = make_vec()
         ext_force_n_ts = make_vec()
-        for i in range(len(self.structs)):
+        for i in range(len(structs)):
             q_ns[i][..., 0] = q_n_is[i]
             dq_ns[i][..., 0] = dq_n_is[i]
         #
-        t = np.arange(nb_steps) * h
-        for k in range(1, nb_steps):
-            for i in range(len(self.structs)):
-                struct = self.structs[i]
-                q_ns[i][..., k] = q_ns[i][..., k-1] + h * dq_ns[i][..., k-1] + \
-                    0.5 * h**2 * ddq_ns[i][..., k-1]
+        t = np.arange(self.nb_steps) * self.h
+        for k in range(1, self.nb_steps):
+            for i in range(len(structs)):
+                struct = structs[i]
+                q_ns[i][..., k] = q_ns[i][..., k-1] + self.h * dq_ns[i][..., k-1] + \
+                    0.5 * self.h**2 * ddq_ns[i][..., k-1]
                 dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
-                    0.5 * h * ddq_ns[i][..., k-1]
-                ext_force_n = struct.ext_force_n(self.ext_forces[i], n)
+                    0.5 * self.h * ddq_ns[i][..., k-1]
+                ext_force_n = struct.ext_force_n(ext_forces[i], self.n)
                 ext_force_n_ts[i][..., k] = ext_force_n(t[k])
                 ddq_u_ns[i][..., k] = struct.solve_unconstrained(
-                    q_ns[i][..., k], dq_half_ns[i][..., k], n, ext_force_n_ts[i][..., k])
+                    q_ns[i][..., k], dq_half_ns[i][..., k], self.n, ext_force_n_ts[i][..., k])
                 # solve constraints
                 # TODO
                 #
                 ddq_ns[i][..., k] = ddq_u_ns[i][..., k]
                 #
                 dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
-                    h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])
+                    self.h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])
         return t, q_ns, dq_ns, ddq_ns, ext_force_n_ts
-
-
-def main(string_data: GuitarStringData, body_data: GuitarBodyData, f_ext_string: Callable[[float, float], float]):
-
-    b = GuitarBody(body_data)
-    s = GuitarString(string_data)
-
-    f_ext_body = Excitation.make_null()
-
-    solver = CouplingSolver([s, b], [f_ext_string, f_ext_body])
-
-    n = np.arange(5)
-    nb_steps = 8
-    h = 0.01
-
-    q_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
-    dq_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
-
-    t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = solver.solve(
-        q_n_is, dq_n_is, n, nb_steps, h)
-
-    # data_q_n = cartesian_product(*q_ns[0])
-    df_q_n = make_modetime_dataframe(q_ns[0], n, t)
-    df_dq_n = make_modetime_dataframe(dq_ns[0], n, t)
-    df_ddq_n = make_modetime_dataframe(ddq_ns[0], n, t)
-    df_ext_force_n_t = make_modetime_dataframe(ext_force_n_ts[0], n, t)
-
-    print(df_ddq_n)
-
-    return df_q_n, df_dq_n, df_ddq_n, df_ext_force_n_t
-
-
-def test():
-    n = np.arange(10)
-    x = np.linspace(0, s.data.l, 50)
-    v = np.empty((len(n), len(x)))
-    phi = s.phi_n(n)
-    for i in range(len(n)):
-        v[i] = phi[i](x)
-    d = pd.DataFrame({
-        'f_n': s.f_n(n),
-        'ksi_n': s.ksi_n(n),
-        'm_n': s.m_n(n),
-    }, index=list(n))
-    d_p = pd.DataFrame(v)
-
-    print(d)
-    print(d_p)
-
-
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(description='Guitar test')
-    parser.add_argument('--string', required=True, type=str,
-                        help='Guitar string config file path')
-    parser.add_argument('--body', required=True, type=str,
-                        help='Guitar body data file path')
-    parser.add_argument('--excitation', required=True, type=str,
-                        help='String excitation config file path')
-    args = parser.parse_args()
-
-    string_data = load_data_json(GuitarStringData, args.string)
-    body_data = load_data_csv(GuitarBodyData, args.body)
-    f_ext_string = load_data_json(
-        Excitation.make_triangular, args.excitation, l=string_data.l)
-
-    main(string_data, body_data, f_ext_string)

@@ -9,14 +9,18 @@
             "type": "python",
             "request": "launch",
             "console": "integratedTerminal",
-            "module": "source.uk.synth_uk",
+            "program": "${cwd}/source/run_uk.py",
             "args": [
                 "--string",
                 "${cwd}/source/data/guitar_string_config.json",
                 "--body",
                 "${cwd}/source/data/guitar_body_data.csv",
                 "--excitation",
-                "${cwd}/source/data/guitar_excitation_config.json"
+                "${cwd}/source/data/guitar_excitation_config.json",
+                "--simulation",
+                "${cwd}/source/data/simulation_config.json",
+                "--out_dir",
+                "${cwd}/out/uk/"
             ]
         }
     ]
