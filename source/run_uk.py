@@ -12,50 +12,35 @@ import json
 import argparse
 
 from uk.data import GuitarStringData, GuitarBodyData, Excitation, AFloat, AInt, ACallableFloat
-from uk.structure import GuitarString, GuitarBody, CouplingSolver
+from uk.structure import GuitarString, GuitarBody, ModalSimulation
 from util.util import make_modetime_dataframe, load_data_json, load_data_csv
 
 
-def main(string_data: GuitarStringData, body_data: GuitarBodyData, f_ext_string: Callable[[float, float], float], solver: CouplingSolver):
+def main(string_data: GuitarStringData, body_data: GuitarBodyData, f_ext_string: Callable[[float, float], float], simulation: ModalSimulation):
 
-    n = solver.n
+    n = simulation.n
     b = GuitarBody(body_data)
     s = GuitarString(string_data)
 
+    # There is no external force applied to the body.
     f_ext_body = Excitation.make_null()
 
+    # The string and body are initially at rest.
     q_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
     dq_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
 
-    t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = solver.solve(
+    # Run the simulation / solve the system.
+    t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = simulation.run(
         [s, b], [f_ext_string, f_ext_body],
         q_n_is, dq_n_is)
 
-    # data_q_n = cartesian_product(*q_ns[0])
+    # compute data frames from the result.
     df_q_n = make_modetime_dataframe(q_ns[0], n, t)
     df_dq_n = make_modetime_dataframe(dq_ns[0], n, t)
     df_ddq_n = make_modetime_dataframe(ddq_ns[0], n, t)
     df_ext_force_n_t = make_modetime_dataframe(ext_force_n_ts[0], n, t)
 
     return df_q_n, df_dq_n, df_ddq_n, df_ext_force_n_t
-
-
-def test():
-    n = np.arange(10)
-    x = np.linspace(0, s.data.l, 50)
-    v = np.empty((len(n), len(x)))
-    phi = s.phi_n(n)
-    for i in range(len(n)):
-        v[i] = phi[i](x)
-    d = pd.DataFrame({
-        'f_n': s.f_n(n),
-        'ksi_n': s.ksi_n(n),
-        'm_n': s.m_n(n),
-    }, index=list(n))
-    d_p = pd.DataFrame(v)
-
-    print(d)
-    print(d_p)
 
 
 if __name__ == "__main__":
@@ -73,15 +58,18 @@ if __name__ == "__main__":
                         help='Output directory for output data')
     args = parser.parse_args()
 
+    # Loading config / data
     string_data = load_data_json(GuitarStringData, args.string)
     body_data = load_data_csv(GuitarBodyData, args.body)
     f_ext_string = load_data_json(
         Excitation.make_triangular, args.excitation, l=string_data.l)
-    solver = load_data_json(CouplingSolver, args.simulation)
+    simulation = load_data_json(ModalSimulation, args.simulation)
 
+    # run the simulation
     df_q_n, df_dq_n, df_ddq_n, df_ext_force_n_t = main(
-        string_data, body_data, f_ext_string, solver)
+        string_data, body_data, f_ext_string, simulation)
 
+    # save the result as required.
     if args.out_dir is not None:
         output_path = pathlib.Path(args.out_dir)
         output_path.mkdir(parents=True, exist_ok=True)

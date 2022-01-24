@@ -11,8 +11,8 @@ from uk.data import GuitarStringData, GuitarBodyData, Excitation, AFloat, AInt, 
 
 
 class ModalStructure:
-    """
-        One difference: the indices start at 0,
+    """A base trait for modal structures.
+        The modes start at 0,
         so f_0 is the fundamental.
 
     """
@@ -21,10 +21,10 @@ class ModalStructure:
         """Modal frequencies
 
         Args:
-            n (int): [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            float: [description]
+            AFloat: The modal frequency ratio for mode `n` if `n` is an integer, an array of modal frequencies if `n` is an array.
         """
         raise NotImplemented
 
@@ -33,25 +33,22 @@ class ModalStructure:
         """Modal damping ratio
 
         Args:
-            n (AInt): [description]
-
-        Raises:
-            NotImplemented: [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            AFloat: [description]
+            AFloat: The modal damping ratio for mode `n` if `n` is an integer, an array of modal damping ratios if `n` is an array.
         """
-        raise Not()
+        raise NotImplemented
 
     @abstractmethod
     def m_n(self, n: AInt) -> AFloat:
         """Modal masses
 
         Args:
-            n (int): [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            float: [description]
+            AFloat: The modal mass for mode `n` if `n` is an integer, an array of modal masses if `n` is an array.
         """
         raise NotImplemented
 
@@ -59,10 +56,10 @@ class ModalStructure:
         """Modal 'resistance'
 
         Args:
-            n (Uniont[int, npt.NDArray[int]]): [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            Union[float, npt.NDArray[float]]: [description]
+            AFloat: The modal resistance for mode `n` if `n` is an integer, an array of modal resistances if `n` is an array.
         """
         return (4 * np.pi) * self.m_n(n) * self.f_n(n) * self.ksi_n(n)
 
@@ -70,28 +67,28 @@ class ModalStructure:
         """Modal stiffness
 
         Args:
-            n (Union[int, npt.NDArray[int]]): [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            Union[float, npt.NDArray[float]]: [description]
+            AFloat: The modal stiffness for mode `n` if `n` is an integer, an array of modal stiffness if `n` is an array.
         """
         return (4 * np.pi**2) * self.m_n(n) * self.f_n(n) ** 2
 
     @abstractmethod
     def phi_n(self, n: AInt) -> ACallableFloat:
-        """Modeshapes
+        """Modeshapes.
 
         Args:
-            n (int): [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            Callable[[npt.NDArray[float]], npt.NDarray[float]]: The modeshape function for mode n
+            ACallableFloat: The modeshape function for mode `n` if `n` is an integer, an array of modeshape functions if `n` is an array.
         """
         return NotImplemented
 
     @abstractproperty
     def extends(self) -> Tuple[float, float]:
-        """Extends of the structure along the vibrating dimension
+        """Extends of the structure along the vibrating dimension.
 
         Returns:
             Tuple[float, float]: [description]
@@ -99,6 +96,15 @@ class ModalStructure:
         return NotImplemented
 
     def ext_force_n(self, ext_force: Callable[[float, float], float], n: AInt) -> ACallableFloat:
+        """Make the modal external force functions from the external force.
+
+        Args:
+            ext_force (Callable[[float, float], float]): The (x, t) function of external forces applied on the structure.
+            n (AInt): The mode as an integer or modes as an array of integers.
+
+        Returns:
+            ACallableFloat: A (t) function if `n` is an integer, an array of (t) functions if `n` is an array.
+        """
         phi_n = self.phi_n(n)
         x_1, x_2 = self.extends
 
@@ -120,6 +126,23 @@ class ModalStructure:
         return _f
 
     def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force_n_t: AFloat) -> AFloat:
+        """Solves the unconstrained system.
+        See equation (42) in:
+
+            ANTUNES, Jose et DEBUT, Vincent.
+            Dynamical computation of constrained flexible systems
+                using a modal Udwadia-Kalaba formulation: Application to musical instruments.
+            The Journal of the Acoustical Society of America, 2017, vol. 141, no 2, p. 764-778.
+
+        Args:
+            q_n (AFloat): The modal responses,
+            dq_n (AFloat): The derivate of the modal responses `q_n`s,
+            n (AInt): The mode as an integer or modes as an array of integers.
+            ext_force_n_t (AFloat): The modal external forces.
+
+        Returns:
+            AFloat: The double-derivate of the unconstrained modal responses.
+        """
         c_n = self.c_n(n)
         k_n = self.k_n(n)
         m_n = self.m_n(n)
@@ -128,6 +151,9 @@ class ModalStructure:
 
 
 class GuitarBody(ModalStructure):
+    """Model for the inert guitar body.
+    """
+
     def __init__(self, data: GuitarBodyData) -> None:
         self.data = data
 
@@ -151,6 +177,9 @@ class GuitarBody(ModalStructure):
 
 
 class GuitarString(ModalStructure):
+    """Model for the guitar string.
+    """
+
     def __init__(self,  data: GuitarStringData) -> None:
         self.data = data
 
@@ -158,10 +187,10 @@ class GuitarString(ModalStructure):
         """Some modal factor
 
         Args:
-            n (int): [description]
+            n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            float: [description]
+            AFloat: Modal factors used in some other modal parameters.
         """
         return (2*n + 1) * np.pi / (2 * self.data.l)
 
@@ -210,7 +239,10 @@ class GuitarString(ModalStructure):
         return (0, self.data.l)
 
 
-class CouplingSolver:
+class ModalSimulation:
+    """A constraint solver and simulation for the U-K formulation of modal analysis.
+    """
+
     def __init__(self, nb_modes: int, nb_steps: int, h: float) -> None:
         self.n = np.arange(nb_modes)
         self.nb_steps = nb_steps
@@ -248,7 +280,18 @@ class CouplingSolver:
         w_mat = 1 - m_halfinv_mat * b_plus_mat * a_mat
         return None
 
-    def solve(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat]) -> Tuple[List[npt.NDArray[AFloat]]]:
+    def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat]) -> Tuple[List[npt.NDArray[AFloat]]]:
+        """Solve the constrained system.
+
+        Args:
+            structs (List[ModalStructure]): List of modal structures.
+            ext_forces (List[Callable[[float, float], float]]): List of external forces applied to each modal structure.
+            q_n_is (List[AFloat]): List of initial modal responses for each modal structure.
+            dq_n_is (List[AFloat]): List of initial derivative of modal responses for each modal structure.
+
+        Returns:
+            Tuple[List[npt.NDArray[AFloat]]]: Tuple of computed times, modal responses, associated derivative and modal external forces for each modal structure.
+        """
         assert len(structs) == len(ext_forces) and len(
             structs) == len(q_n_is) and len(structs) == len(dq_n_is)
 

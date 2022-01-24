@@ -74,6 +74,15 @@ class GuitarStringData:
 
 class GuitarBodyData:
     def __init__(self, n: AInt, f_n: AFloat, ksi_n: AFloat, m_n: AFloat) -> None:
+        """Guitar body parameters.
+        Measured beforehand.
+
+        Args:
+            n (AInt): Modes,
+            f_n (AFloat): Modal frequencies,
+            ksi_n (AFloat): Modal damping ratios,
+            m_n (AFloat): Modal masses.
+        """
         self.n = n
         self.f_n = f_n
         self.ksi_n = ksi_n
@@ -108,7 +117,7 @@ class Excitation:
             delta_t (float): [description]
 
         Returns:
-            Callable[[float, float], float]: [description]
+            Callable[[float, float], float]: A (x, t) function with a triangular shape for `delta_t`, then null.
         """
         x_e = x_rel * l
 
@@ -125,4 +134,9 @@ class Excitation:
 
     @staticmethod
     def make_null() -> Callable[[float, float], float]:
+        """Make Placeholder constant null function.
+
+        Returns:
+            Callable[[float, float], float]: [description]
+        """
         return lambda x, t: 0
