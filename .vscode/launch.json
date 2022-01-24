@@ -9,7 +9,7 @@
             "type": "python",
             "request": "launch",
             "console": "integratedTerminal",
-            "program": "${cwd}/source/synth_uk.py",
+            "module": "source.uk.synth_uk",
             "args": [
                 "--string",
                 "${cwd}/source/data/guitar_string_config.json",

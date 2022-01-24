@@ -3,6 +3,24 @@ import pandas as pd
 import numpy as np
 import numpy.typing as npt
 
+import json
+
+
+def load_data_json(cls, path: str, **kwargs) -> object:
+    with open(path, mode='r') as config:
+        data = json.load(
+            config, object_hook=lambda d: cls(**d, **kwargs))
+        return data
+
+
+def load_data_csv(cls, path: str) -> object:
+    df = pd.read_csv(path)
+    data_dict = df.to_dict()
+    for (k, v) in df.items():
+        data_dict[k] = v.to_numpy()
+    data = cls(**data_dict)
+    return data
+
 
 def make_modetime_dataframe(data: npt.NDArray[float], n: npt.NDArray[int], t: npt.NDArray[float]) -> npt.NDArray:
     """
