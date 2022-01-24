@@ -191,9 +191,7 @@ class ModalStructure:
                 return ext_f
         return _f
 
-    def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force: Callable[[float, float], float], t: float) -> AFloat:
-        ext_force_n = self.ext_force_n(ext_force, n)
-        ext_force_n_t = ext_force_n(t)
+    def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force_n_t: AFloat) -> AFloat:
         c_n = self.c_n(n)
         k_n = self.k_n(n)
         m_n = self.m_n(n)
@@ -314,7 +312,7 @@ class CouplingSolver:
         w_mat = 1 - m_halfinv_mat * b_plus_mat * a_mat
         return None
 
-    def simulation(self, q_n_is: List[AFloat], dq_n_is: List[AFloat], n: AInt, nb_steps: int, h: float) -> Tuple[List[npt.NDArray[AFloat]]]:
+    def solve(self, q_n_is: List[AFloat], dq_n_is: List[AFloat], n: AInt, nb_steps: int, h: float) -> Tuple[List[npt.NDArray[AFloat]]]:
         def make_vec():
             if np.ndim(n) != 0:
                 return [np.zeros(n.shape + (nb_steps,), dtype=float)
@@ -326,6 +324,7 @@ class CouplingSolver:
         ddq_ns = make_vec()
         ddq_u_ns = make_vec()
         dq_half_ns = make_vec()
+        ext_force_n_ts = make_vec()
         for i in range(len(self.structs)):
             q_ns[i][..., 0] = q_n_is[i]
             dq_ns[i][..., 0] = dq_n_is[i]
@@ -338,15 +337,18 @@ class CouplingSolver:
                     0.5 * h**2 * ddq_ns[i][..., k-1]
                 dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
                     0.5 * h * ddq_ns[i][..., k-1]
+                ext_force_n = struct.ext_force_n(self.ext_forces[i], n)
+                ext_force_n_ts[i][..., k] = ext_force_n(t_ks[k])
                 ddq_u_ns[i][..., k] = struct.solve_unconstrained(
-                    q_ns[i][..., k], dq_half_ns[i][..., k], n, self.ext_forces[i], t_ks[k])
+                    q_ns[i][..., k], dq_half_ns[i][..., k], n, ext_force_n_ts[i][..., k])
                 # solve constraints
                 # TODO
+                #
                 ddq_ns[i][..., k] = ddq_u_ns[i][..., k]
                 #
                 dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
                     h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])
-        return t_ks, q_ns, dq_ns, ddq_ns
+        return t_ks, q_ns, dq_ns, ddq_ns, ext_force_n_ts
 
 
 if __name__ == "__main__":
@@ -387,7 +389,7 @@ if __name__ == "__main__":
     q_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
     dq_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
 
-    t_ks, q_ns, dq_ns, ddq_ns = solver.simulation(
+    t_ks, q_ns, dq_ns, ddq_ns, ext_force_n_ts = solver.solve(
         q_n_is, dq_n_is, n, nb_steps, h)
 
     print(q_ns[0])
