@@ -8,6 +8,11 @@ from itertools import chain
 from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
 
+import pandas as pd
+import json
+import argparse
+from util import make_modetime_dataframe
+
 AFloat = Union[float, npt.NDArray[float]]
 AInt = Union[int, npt.NDArray[int]]
 
@@ -329,7 +334,7 @@ class CouplingSolver:
             q_ns[i][..., 0] = q_n_is[i]
             dq_ns[i][..., 0] = dq_n_is[i]
         #
-        t_ks = np.arange(nb_steps) * h
+        t = np.arange(nb_steps) * h
         for k in range(1, nb_steps):
             for i in range(len(self.structs)):
                 struct = self.structs[i]
@@ -338,7 +343,7 @@ class CouplingSolver:
                 dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
                     0.5 * h * ddq_ns[i][..., k-1]
                 ext_force_n = struct.ext_force_n(self.ext_forces[i], n)
-                ext_force_n_ts[i][..., k] = ext_force_n(t_ks[k])
+                ext_force_n_ts[i][..., k] = ext_force_n(t[k])
                 ddq_u_ns[i][..., k] = struct.solve_unconstrained(
                     q_ns[i][..., k], dq_half_ns[i][..., k], n, ext_force_n_ts[i][..., k])
                 # solve constraints
@@ -348,51 +353,69 @@ class CouplingSolver:
                 #
                 dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
                     h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])
-        return t_ks, q_ns, dq_ns, ddq_ns, ext_force_n_ts
+        return t, q_ns, dq_ns, ddq_ns, ext_force_n_ts
 
 
-if __name__ == "__main__":
-    import pandas as pd
-    import json
-    import argparse
+class Excitation:
+    @staticmethod
+    def make_triangular(x_rel: float, l: float, height: float, delta_t: float) -> Callable[[float, float], float]:
+        """Make a triangular function corresponding to
+        a time-limited near-point excitation of a string.
 
-    parser = argparse.ArgumentParser(description='Guitar test')
-    parser.add_argument('--string', required=True, type=str,
-                        help='Guitar string config file path')
-    parser.add_argument('--body', required=True, type=str,
-                        help='Guitar body data file path')
-    args = parser.parse_args()
+        Args:
+            x_rel (float): x-coordinate ratio of the position of the excitation.
+            l (float): [description]
+            height (float): [description]
+            delta_t (float): [description]
 
-    with open(args.string, mode='r') as config:
-        string_data = json.load(
-            config, object_hook=lambda d: GuitarStringData(**d))
-    body_frame = pd.read_csv(args.body)
-    body_frame = body_frame.to_dict()
-    for (k, v) in body_frame.items():
-        body_frame[k] = np.fromiter(v.values(), dtype=float)
-    body_data = GuitarBodyData(**body_frame)
+        Returns:
+            Callable[[float, float], float]: [description]
+        """
+        x_e = x_rel * l
+
+        def triag(x: float, t: float) -> float:
+            if t > delta_t:
+                return 0
+            elif 0 <= x < x_e:
+                return height * x / x_e
+            elif x_e <= x <= l:
+                return height * (1 - (x - x_e) / (l - x_e))
+            else:
+                return 0
+        return triag
+
+    @staticmethod
+    def make_null() -> Callable[[float, float], float]:
+        return lambda x, t: 0
+
+
+def main(string_data: GuitarStringData, body_data: GuitarBodyData, f_ext_string: Callable[[float, float], float]):
     b = GuitarBody(body_data)
     s = GuitarString(string_data)
 
-    x_f = 0.33
-    delta_x = 0.01
-    delta_t = 0.1
+    f_ext_body = Excitation.make_null()
 
-    def ext_force_string(x, t):
-        return 1 if np.abs(x - x_f) <= delta_x/2 and t < delta_t else 0
-    solver = CouplingSolver([s, b], [ext_force_string, lambda x, t: 0])
+    solver = CouplingSolver([s, b], [f_ext_string, f_ext_body])
 
     n = np.arange(5)
-    nb_steps = 20
+    nb_steps = 8
     h = 0.01
 
     q_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
     dq_n_is = [np.zeros(n.shape, dtype=float) for i in range(2)]
 
-    t_ks, q_ns, dq_ns, ddq_ns, ext_force_n_ts = solver.solve(
+    t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = solver.solve(
         q_n_is, dq_n_is, n, nb_steps, h)
 
-    print(q_ns[0])
+    # data_q_n = cartesian_product(*q_ns[0])
+    df_q_n = make_modetime_dataframe(q_ns[0], n, t)
+    df_dq_n = make_modetime_dataframe(dq_ns[0], n, t)
+    df_ddq_n = make_modetime_dataframe(ddq_ns[0], n, t)
+    df_ext_force_n_t = make_modetime_dataframe(ext_force_n_ts[0], n, t)
+
+    print(df_ddq_n)
+
+    return df_q_n, df_dq_n, df_ddq_n, df_ext_force_n_t
 
 
 def test():
@@ -411,3 +434,28 @@ def test():
 
     print(d)
     print(d_p)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description='Guitar test')
+    parser.add_argument('--string', required=True, type=str,
+                        help='Guitar string config file path')
+    parser.add_argument('--body', required=True, type=str,
+                        help='Guitar body data file path')
+    parser.add_argument('--excitation', required=True, type=str,
+                        help='String excitation config file path')
+    args = parser.parse_args()
+
+    with open(args.string, mode='r') as config:
+        string_data = json.load(
+            config, object_hook=lambda d: GuitarStringData(**d))
+    body_frame = pd.read_csv(args.body)
+    body_frame = body_frame.to_dict()
+    for (k, v) in body_frame.items():
+        body_frame[k] = np.fromiter(v.values(), dtype=float)
+    body_data = GuitarBodyData(**body_frame)
+    with open(args.excitation, mode='r') as config:
+        f_ext_string = json.load(
+            config, object_hook=lambda d: Excitation.make_triangular(l=string_data.l, **d))
+    main(string_data, body_data, f_ext_string)

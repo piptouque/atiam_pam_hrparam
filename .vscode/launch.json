@@ -14,7 +14,9 @@
                 "--string",
                 "${cwd}/source/data/guitar_string_config.json",
                 "--body",
-                "${cwd}/source/data/guitar_body_data.csv"
+                "${cwd}/source/data/guitar_body_data.csv",
+                "--excitation",
+                "${cwd}/source/data/guitar_excitation_config.json"
             ]
         }
     ]
