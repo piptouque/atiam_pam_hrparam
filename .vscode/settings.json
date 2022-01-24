@@ -1,9 +1,9 @@
 {
     "python.pythonPath": "/home/xabbu/anaconda3/envs/env_pam_hr/bin/python",
-    "python.linting.pylintEnabled": false,
+    "python.linting.pylintEnabled": true,
     "python.linting.enabled": true,
     "editor.formatOnSave": true,
     "editor.formatOnType": true,
     "python.formatting.provider": "autopep8",
-    "python.linting.pycodestyleEnabled": true
+    "python.linting.pycodestyleEnabled": false
 }
