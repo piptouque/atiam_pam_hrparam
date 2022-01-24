@@ -149,6 +149,10 @@ class ModalStructure:
         ddq_u_n = - (c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
         return ddq_u_n
 
+    def y_n(self, q_n: AFloat, n: AInt) -> ACallableFloat:
+        phi_n = self.phi_n(n)
+        return lambda x: phi_n(x) * q_n
+
 
 class GuitarBody(ModalStructure):
     """Model for the inert guitar body.
