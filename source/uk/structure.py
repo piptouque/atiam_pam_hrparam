@@ -282,6 +282,12 @@ class ModalSimulation:
 
     def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat]) -> Tuple[List[npt.NDArray[AFloat]]]:
         """Solve the constrained system.
+        Based on the velocity-Verlet algorithm described in:
+
+            ANTUNES, Jose et DEBUT, Vincent.
+            Dynamical computation of constrained flexible systems
+                using a modal Udwadia-Kalaba formulation: Application to musical instruments.
+            The Journal of the Acoustical Society of America, 2017, vol. 141, no 2, p. 764-778.
 
         Args:
             structs (List[ModalStructure]): List of modal structures.
