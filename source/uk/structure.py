@@ -204,11 +204,11 @@ class ModalStructure:
         phi_n = self.phi_n(n)
         if np.ndim(n) != 0:
             y_n = np.empty(n.shape, dtype=type(Callable))
+
+            def _y_j(j: int):
+                return lambda x: phi_n[j](x) * q_n[j]
             for j in range(len(n)):
-                def _y_j(x: float, idx=j):
-                    val = phi_n[j](x) * q_n[j]
-                    return val
-                y_n[j] = _y_j
+                y_n[j] = _y_j(j)
             return y_n
         else:
             return lambda x: phi_n(x) * q_n
@@ -295,15 +295,15 @@ class GuitarString(ModalStructure):
     def phi_n(self, n: AInt) -> ACallableFloat:
         p_n = self._p_n(n)
         if np.ndim(n) != 0:
+            def _phi(j: int):
+                return lambda x: np.sin(p_n[j] * x)
             phi_ns = np.empty(n.shape, dtype=type(Callable))
-            for i in range(len(n)):
+            for j in range(len(n)):
 
                 # fix: copy value p_n[i] otherwise it is taken by reference.
                 # defining function inside loops is tricky
                 # see: https://stackoverflow.com/a/44385625
-                def _phi(x, p=p_n[i]):
-                    return np.sin(p * x)
-                phi_ns[i] = _phi
+                phi_ns[j] = _phi(j)
             return phi_ns
         else:
             return lambda x: np.sin(p_n * x)
