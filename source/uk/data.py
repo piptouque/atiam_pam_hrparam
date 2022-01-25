@@ -4,6 +4,7 @@ import numpy.typing as npt
 from typing import Callable, Union
 
 AFloat = Union[float, npt.NDArray[float]]
+AVect = AFloat, AFloat
 AInt = Union[int, npt.NDArray[int]]
 
 ACallableFloat = Union[Callable[[AFloat], AFloat],
