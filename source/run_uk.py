@@ -11,8 +11,8 @@ import pandas as pd
 import json
 import argparse
 
-from uk.data import GuitarStringData, GuitarBodyData, Excitation, AFloat, AInt, ACallableFloat
-from uk.structure import GuitarString, GuitarBody, ModalSimulation
+from uk.data import GuitarStringData, GuitarBodyData, AFloat, AInt, ACallableFloat
+from uk.structure import GuitarString, GuitarBody, Force, ForceRamp, ForceNull, ModalSimulation
 from util.util import make_modetime_dataframe, load_data_json, load_data_csv
 
 
@@ -34,8 +34,8 @@ if __name__ == "__main__":
     # Loading config / data
     string_data = load_data_json(GuitarStringData, args.string)
     body_data = load_data_csv(GuitarBodyData, args.body)
-    f_ext_string = load_data_json(
-        Excitation.make_triangular, args.excitation, l=string_data.l)
+    ext_force_string = load_data_json(
+        ForceRamp, args.excitation, l=string_data.l)
     sim = load_data_json(ModalSimulation, args.simulation)
 
     # SIMULATION
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     string = GuitarString(string_data)
 
     # There is no external force applied to the body.
-    f_ext_body = Excitation.make_null()
+    ext_force_body = ForceNull()
 
     # The string and body are initially at rest.
     q_n_is = [np.zeros(sim.n.shape, dtype=float) for i in range(2)]
@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     # Run the simulation / solve the system.
     t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = sim.run(
-        [string, body], [f_ext_string, f_ext_body],
+        [string, body], [ext_force_string, ext_force_body],
         q_n_is, dq_n_is)
 
     y_ns = [struct.y_n(q_ns[i], sim.n)

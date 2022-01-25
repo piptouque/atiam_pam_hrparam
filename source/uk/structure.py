@@ -7,7 +7,59 @@ import scipy.integrate as integrate
 from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
 
-from uk.data import GuitarStringData, GuitarBodyData, Excitation, AFloat, AInt, ACallableFloat
+from uk.data import GuitarStringData, GuitarBodyData, AFloat, AInt, ACallableFloat
+
+
+class Force:
+    """[summary]
+    """
+
+    @abstractmethod
+    def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
+        return NotImplemented
+
+    @abstractmethod
+    def __call__(self, x: float, y: float) -> float:
+        return NotImplemented
+
+
+class ForceNull(Force):
+    """Placeholder constant null function.
+    """
+
+    def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
+        return lambda t: 0
+
+    def __call__(self, x: float, y: float) -> float:
+        return 0
+
+
+class ForceRamp(Force):
+    """[summary]
+    """
+
+    def __init__(self, x_rel: float, l: float, height: float, delta_t: float) -> None:
+
+        self.x_rel = x_rel
+        self.l = l
+        self.height = height
+        self.delta_t = delta_t
+
+    def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
+        def _force_n(t: float) -> float:
+            if t <= self.delta_t:
+                integ, err = integrate.quad(phi, extends[0], extends[1])
+                return self.height * t / self.delta_t * integ
+            else:
+                return 0
+        return _force_n
+
+    def __call__(self, x: float, y: float) -> float:
+        x_e = self.x_rel * self.l
+        if np.isclose(x_e, x) and t <= self.delta_t:
+            return self.height * t / self.delta_t
+        else:
+            return 0
 
 
 class ModalStructure:
@@ -95,7 +147,7 @@ class ModalStructure:
         """
         return NotImplemented
 
-    def ext_force_n(self, ext_force: Callable[[float, float], float], n: AInt) -> ACallableFloat:
+    def ext_force_n(self, ext_force: Force, n: AInt) -> ACallableFloat:
         """Make the modal external force functions from the external force.
 
         Args:
@@ -106,24 +158,17 @@ class ModalStructure:
             ACallableFloat: A (t) function if `n` is an integer, an array of (t) functions if `n` is an array.
         """
         phi_n = self.phi_n(n)
-        x_1, x_2 = self.extends
 
-        def _f(t):
-            if np.ndim(n) != 0:
-                ext_f = np.empty(n.shape, dtype=float)
-                for j in range(len(n)):
-                    def _g(x, t):
-                        f = ext_force(x, t)
-                        phi = phi_n[j](x)
-                        return f * phi
-                    integ, err = integrate.quad(_g, x_1, x_2, args=(t))
-                    ext_f[j] = integ
-                return ext_f
-            else:
-                ext_f, err = integrate.quad(lambda x, t: ext_force(
-                    x, t) * phi_n(x), x_1, x_2, args=(t))
-                return ext_f
-        return _f
+        if np.ndim(n) != 0:
+            force_n = np.empty(n.shape, dtype=type(Callable))
+            for j in range(len(n)):
+                # integ, err = integrate.quad(_g, x_1, x_2, args=(t))
+                force = ext_force.project_mode(phi_n[j], self.extends)
+                force_n[j] = force
+            return force_n
+        else:
+            force_n = ext_force.project_mode(phi_n, self.extends)
+            return force_n
 
     def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force_n_t: AFloat) -> AFloat:
         """Solves the unconstrained system.
@@ -164,9 +209,9 @@ class GuitarBody(ModalStructure):
     def _find_n(self, ids: AInt) -> AInt:
         if np.ndim(ids) != 0:
             n = np.empty_like(ids)
-            for (k, idx) in enumerate(ids):
+            for (j, idx) in enumerate(ids):
                 n_idx, = np.where(self.data.n == idx)
-                n[k] = n_idx
+                n[j] = n_idx
             return n
         else:
             return np.where(self.data.n == ids)
@@ -340,7 +385,11 @@ class ModalSimulation:
                 dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
                     0.5 * self.h * ddq_ns[i][..., k-1]
                 ext_force_n = struct.ext_force_n(ext_forces[i], self.n)
-                ext_force_n_ts[i][..., k] = ext_force_n(t[k])
+                if np.ndim(self.n) != 0:
+                    for j in range(len(self.n)):
+                        ext_force_n_ts[i][j, k] = ext_force_n[j](t[k])
+                else:
+                    ext_force_n_ts[i][..., k] = ext_force_n(t[k])
                 ddq_u_ns[i][..., k] = struct.solve_unconstrained(
                     q_ns[i][..., k], dq_half_ns[i][..., k], self.n, ext_force_n_ts[i][..., k])
                 # solve constraints
