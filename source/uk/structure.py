@@ -161,14 +161,24 @@ class GuitarBody(ModalStructure):
     def __init__(self, data: GuitarBodyData) -> None:
         self.data = data
 
+    def _find_n(self, ids: AInt) -> AInt:
+        if np.ndim(ids) != 0:
+            n = np.empty_like(ids)
+            for (k, idx) in enumerate(ids):
+                n_idx, = np.where(self.data.n == idx)
+                n[k] = n_idx
+            return n
+        else:
+            return np.where(self.data.n == ids)
+
     def f_n(self, n: AInt) -> AFloat:
-        return self.data.f_n[self.data.n[n]]
+        return self.data.f_n[self._find_n(n)]
 
     def ksi_n(self, n: AInt) -> AFloat:
-        return self.data.ksi_n[self.data.n[n]]
+        return self.data.ksi_n[self._find_n(n)]
 
     def m_n(self, n: AInt) -> AFloat:
-        return self.data.m_n[self.data.n[n]]
+        return self.data.m_n[self._find_n(n)]
 
     def phi_n(self, n: AInt) -> AFloat:
         # no info on the modeshapes for the body.
