@@ -1,5 +1,5 @@
 {
-    "do_log": false,
+    "do_log": true,
     "do_save": true,
     "nb_points": 100
 }

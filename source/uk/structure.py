@@ -15,11 +15,11 @@ class Force:
     """
 
     @abstractmethod
-    def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
+    def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
         return NotImplemented
 
     @abstractmethod
-    def __call__(self, x: float, y: float) -> float:
+    def __call__(self, x: AFloat, y: AFloat) -> AFloat:
         return NotImplemented
 
 
@@ -27,11 +27,11 @@ class ForceNull(Force):
     """Placeholder constant null function.
     """
 
-    def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
+    def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
         return lambda t: 0
 
-    def __call__(self, x: float, y: float) -> float:
-        return 0
+    def __call__(self, x: AFloat, y: AFloat) -> AFloat:
+        return np.zeros_like(x) if np.ndim(x) != 0 else 0
 
 
 class ForceRamp(Force):
@@ -45,18 +45,16 @@ class ForceRamp(Force):
         self.delta_x = delta_x
         self.delta_t = delta_t
 
-    def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
-        def _force_n(t: float) -> float:
-            if t <= self.delta_t:
-                integ, err = integrate.quad(phi, extends[0], extends[1])
-                return self.height * t / self.delta_t * integ
-            else:
-                return 0
+    def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
+        def _force_n(t: AFloat) -> AFloat:
+            integ, err = integrate.quad(
+                phi, (self.x_rel - self.delta_x/2)*self.l, (self.x_rel + self.delta_x/2)*self.l)
+            return (t <= self.delta_t) * self.height * t / self.delta_t * integ
         return _force_n
 
     def __call__(self, x: AFloat, t: AFloat) -> AFloat:
-        x_e = self.x_rel * self.l
-        val = (t <= self.delta_t) * (np.abs(x - x_e) <= self.delta_x/2)
+        val = (t <= self.delta_t) * \
+            (np.abs(x/self.l - self.x_rel) <= self.delta_x/2)
         return self.height * t / self.delta_t * val
 
 
@@ -160,12 +158,11 @@ class ModalStructure:
         if np.ndim(n) != 0:
             force_n = np.empty(n.shape, dtype=type(Callable))
             for j in range(len(n)):
-                # integ, err = integrate.quad(_g, x_1, x_2, args=(t))
-                force = ext_force.project_mode(phi_n[j], self.extends)
+                force = ext_force.project_mode(phi_n[j])
                 force_n[j] = force
             return force_n
         else:
-            force_n = ext_force.project_mode(phi_n, self.extends)
+            force_n = ext_force.project_mode(phi_n)
             return force_n
 
     def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force_n_t: AFloat) -> AFloat:
@@ -189,7 +186,7 @@ class ModalStructure:
         c_n = self.c_n(n)
         k_n = self.k_n(n)
         m_n = self.m_n(n)
-        ddq_u_n = - (c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
+        ddq_u_n = (- c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
         return ddq_u_n
 
     def y_n(self, q_n: AFloat, n: AInt) -> ACallableFloatVec:
@@ -208,10 +205,10 @@ class ModalStructure:
         if np.ndim(n) != 0:
             y_n = np.empty(n.shape, dtype=type(Callable))
             for j in range(len(n)):
-                def y_j(x: float, idx=j):
+                def _y_j(x: float, idx=j):
                     val = phi_n[j](x) * q_n[j]
                     return val
-                y_n[j] = y_j
+                y_n[j] = _y_j
             return y_n
         else:
             return lambda x: phi_n(x) * q_n
@@ -304,9 +301,9 @@ class GuitarString(ModalStructure):
                 # fix: copy value p_n[i] otherwise it is taken by reference.
                 # defining function inside loops is tricky
                 # see: https://stackoverflow.com/a/44385625
-                def phi(x, p=p_n[i]):
+                def _phi(x, p=p_n[i]):
                     return np.sin(p * x)
-                phi_ns[i] = phi
+                phi_ns[i] = _phi
             return phi_ns
         else:
             return lambda x: np.sin(p_n * x)

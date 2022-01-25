@@ -1,6 +1,6 @@
 {
-    "x_rel": 0.33,
+    "x_rel": 0.9,
     "delta_x": 0.01,
-    "height": 0.2,
-    "delta_t": 0.1
+    "height": 5,
+    "delta_t": 0.01
 }

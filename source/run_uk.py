@@ -70,7 +70,9 @@ if __name__ == "__main__":
 
     y_ns = [struct.y_n(q_ns[i], sim.n)
             for (i, struct) in enumerate([string, body])]
+
     y_n = y_ns[0]
+    ext_force_n_t = ext_force_n_ts[0]
 
     # compute data frames from the result.
     df_q_n = pd.DataFrame(q_ns[0], index=sim.n, columns=t)
@@ -92,37 +94,65 @@ if __name__ == "__main__":
 
     if log.do_log or log.do_save:
         # EXCITATION FORCE ext_force
-        # TODO
-        f_x = ext_force_string(xx, tt)
-        fig = plt.figure(figsize=(6, 8))
+        fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(1, 1, 1, projection='3d')
-        ax.set_title(f'External force')
-        ax.plot_surface(xx, tt, f_x)
+        f_x = ext_force_string(xx, tt)
+        surf = ax.plot_surface(xx, tt, f_x, cmap='coolwarm')
+        ax.set_title(f'Excitation force applied to the string')
         ax.set_xlabel('$x$ (m)')
         ax.set_ylabel('$t$ (s)')
         ax.set_zlabel('$F_{ext}(x, t)$ (N)')
+        fig.colorbar(surf, ax=ax)
         if log.do_log:
             plt.show()
         if log.do_save:
             fig.savefig(output_figure_path / 'ext_force.svg',
                         facecolor='none', transparent=True)
         plt.close(fig)
-        # MODAL DISPLACEMENTS y_n
-        fig = plt.figure(figsize=(len(y_n) * 3, 8))
-        fig.suptitle("Modal displacements (unconstrained)")
 
+        # MODAL DISPLACEMENTS of the String y_n
+        fig = plt.figure(figsize=(8 * (len(y_n)+1)//2, 2*6))
+        fig.subplots_adjust(hspace=0.1, wspace=0.4)
+        fig.suptitle("Modal displacements of the string (unconstrained)")
+        axes = []
+        surfs = []
         for (j, y_j) in enumerate(y_n):
             ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
+            axes.append(ax)
             y_x = y_j(xx)
             #
-            ax.set_title(f'String mode ${j}$')
-            ax.plot_surface(xx, tt, y_x)
+            surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
+            surfs.append(surf)
+            #
+            ax.set_title(f'$n={j}$')
             ax.set_xlabel('$x$ (m)')
             ax.set_ylabel('$t$ (s)')
             ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
+        # add heat map
+        fig.colorbar(surfs[0], ax=axes)
         if log.do_log:
             plt.show()
         if log.do_save:
             fig.savefig(output_figure_path / 'y_n.svg',
                         facecolor='none', transparent=True)
         plt.close(fig)
+
+        # MODAL Excitation ext_force_n_t
+        fig = plt.figure(figsize=(8 * (ext_force_n_t.shape[0]+1)//2, 2*6))
+        fig = plt.figure(figsize=(6, 8))
+        fig.subplots_adjust(hspace=0.3, wspace=0.4)
+        fig.suptitle("Modal excitation force to the string")
+        for (j, ext_force_j) in enumerate(ext_force_n_t):
+            ax = fig.add_subplot(2, len(ext_force_n_t) //
+                                 2+1, j+1)
+            #
+            ax.plot(t, ext_force_j)
+            #
+            ax.set_title(f'$n={j}$')
+            ax.set_xlabel('$t$ (s)')
+            ax.set_ylabel(f'$F_{j}^S(t)$ (N)')
+        if log.do_log:
+            plt.show()
+        if log.do_save:
+            fig.savefig(output_figure_path / 'ext_force_n.svg',
+                        facecolor='none', transparent=True)
