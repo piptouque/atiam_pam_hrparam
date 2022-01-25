@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from uk.data import GuitarStringData, GuitarBodyData, AFloat, AInt, ACallableFloat
 from uk.structure import GuitarString, GuitarBody, Force, ForceRamp, ForceNull, ModalSimulation
-from util.util import make_modetime_dataframe, load_data_json, load_data_csv
+from util.util import load_data_json, load_data_csv
 
 
 if __name__ == "__main__":
@@ -73,11 +73,11 @@ if __name__ == "__main__":
     y_n = y_ns[0]
 
     # compute data frames from the result.
-    df_q_n = make_modetime_dataframe(q_ns[0], sim.n, t)
-    df_dq_n = make_modetime_dataframe(dq_ns[0], sim.n, t)
-    df_ddq_n = make_modetime_dataframe(ddq_ns[0], sim.n, t)
-    df_ext_force_n_t = make_modetime_dataframe(
-        ext_force_n_ts[0], sim.n, t)
+    df_q_n = pd.DataFrame(q_ns[0], index=sim.n, columns=t)
+    df_dq_n = pd.DataFrame(dq_ns[0], index=sim.n, columns=t)
+    df_ddq_n = pd.DataFrame(ddq_ns[0], index=sim.n, columns=t)
+    df_ext_force_n_t = pd.DataFrame(
+        ext_force_n_ts[0], index=sim.n, columns=t)
 
     # save the result as required.
     x = np.linspace(0, string.data.l, log.nb_points)

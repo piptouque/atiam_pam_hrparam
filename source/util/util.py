@@ -39,21 +39,3 @@ def load_data_csv(path: str, cls=SimpleNamespace, **kwargs) -> object:
         data_dict[k] = v.to_numpy()
     data = cls(**data_dict, **kwargs)
     return data
-
-
-def make_modetime_dataframe(data: npt.NDArray[float], n: npt.NDArray[int], t: npt.NDArray[float]) -> pd.DataFrame:
-    """Construct a pandas DataFrame from a 2-d numpy vector.
-    see: https: // moonbooks.org/Articles/How-to-store-a-multidimensional-matrix-in-a-dataframe-with-pandas-/
-
-    Args:
-        data(npt.NDArray[float]): 2-d numpy vector data
-        n(npt.NDArray[int]): 0-axis
-        t(npt.NDArray[float]): 1-axis
-
-    Returns:
-        pd.DataFrame:
-    """
-    df_indices = pd.MultiIndex.from_product([n, t], names=["n", "t"])
-    data = np.repeat(data, len(t), axis=0)
-    df = pd.DataFrame(data=data, index=df_indices, columns=t)
-    return df

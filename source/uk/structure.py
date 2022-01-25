@@ -378,18 +378,18 @@ class ModalSimulation:
         assert len(structs) == len(ext_forces) and len(
             structs) == len(q_n_is) and len(structs) == len(dq_n_is)
 
-        def make_vec():
+        def _make_vec():
             if np.ndim(self.n) != 0:
                 return [np.zeros(self.n.shape + (self.nb_steps,), dtype=float)
                         for i in range(len(structs))]
             else:
                 return [np.zeros((self.nb_steps,), dtype=float) for i in range(len(structs))]
-        q_ns = make_vec()
-        dq_ns = make_vec()
-        ddq_ns = make_vec()
-        ddq_u_ns = make_vec()
-        dq_half_ns = make_vec()
-        ext_force_n_ts = make_vec()
+        q_ns = _make_vec()
+        dq_ns = _make_vec()
+        ddq_ns = _make_vec()
+        ddq_u_ns = _make_vec()
+        dq_half_ns = _make_vec()
+        ext_force_n_ts = _make_vec()
         for i in range(len(structs)):
             q_ns[i][..., 0] = q_n_is[i]
             dq_ns[i][..., 0] = dq_n_is[i]
