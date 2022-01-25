@@ -4,9 +4,10 @@ import numpy as np
 import numpy.typing as npt
 
 import json
+from types import SimpleNamespace
 
 
-def load_data_json(cls, path: str, **kwargs) -> object:
+def load_data_json(path: str, cls=SimpleNamespace, **kwargs) -> object:
     """Constructs an object with `cls` factory method from json data at `path`.
 
     Args:
@@ -22,7 +23,7 @@ def load_data_json(cls, path: str, **kwargs) -> object:
         return data
 
 
-def load_data_csv(cls, path: str, **kwargs) -> object:
+def load_data_csv(path: str, cls=SimpleNamespace, **kwargs) -> object:
     """Constructs an object with `cls` factory method from csv data at `path`.
 
     Args:
@@ -38,21 +39,3 @@ def load_data_csv(cls, path: str, **kwargs) -> object:
         data_dict[k] = v.to_numpy()
     data = cls(**data_dict, **kwargs)
     return data
-
-
-def make_modetime_dataframe(data: npt.NDArray[float], n: npt.NDArray[int], t: npt.NDArray[float]) -> pd.DataFrame:
-    """Construct a pandas DataFrame from a 2-d numpy vector.
-    see: https: // moonbooks.org/Articles/How-to-store-a-multidimensional-matrix-in-a-dataframe-with-pandas-/
-
-    Args:
-        data(npt.NDArray[float]): 2-d numpy vector data
-        n(npt.NDArray[int]): 0-axis
-        t(npt.NDArray[float]): 1-axis
-
-    Returns:
-        pd.DataFrame:
-    """
-    df_indices = pd.MultiIndex.from_product([n, t], names=["n", "t"])
-    data = np.repeat(data, len(t), axis=0)
-    df = pd.DataFrame(data=data, index=df_indices, columns=t)
-    return df

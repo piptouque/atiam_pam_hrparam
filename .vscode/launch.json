@@ -12,13 +12,15 @@
             "program": "${cwd}/source/run_uk.py",
             "args": [
                 "--string",
-                "${cwd}/source/data/guitar_string_config.json",
+                "${cwd}/source/config/uk/guitar_string_config.json",
                 "--body",
-                "${cwd}/source/data/guitar_body_data.csv",
+                "${cwd}/source/config/uk/guitar_body_data.csv",
                 "--excitation",
-                "${cwd}/source/data/guitar_excitation_config.json",
+                "${cwd}/source/config/uk/guitar_excitation_config.json",
                 "--simulation",
-                "${cwd}/source/data/simulation_config.json",
+                "${cwd}/source/config/uk/simulation_config.json",
+                "--log",
+                "${cwd}/source/config/uk/log_config.json",
                 "--out_dir",
                 "${cwd}/out/uk/"
             ]
