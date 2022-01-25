@@ -47,9 +47,14 @@ class ForceRamp(Force):
 
     def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
         def _force_n(t: AFloat) -> AFloat:
-            integ, err = integrate.quad(
-                phi, (self.x_rel - self.delta_x/2)*self.l, (self.x_rel + self.delta_x/2)*self.l)
-            return (t <= self.delta_t) * self.height * t / self.delta_t * integ
+            # if the force is a Dirac in space, simplify the integral instead of computing it
+            # in order to prevent numerical errors.
+            if not np.isclose(self.delta_x, 0):
+                phi_val, err = integrate.quad(
+                    phi, (self.x_rel - self.delta_x/2)*self.l, (self.x_rel + self.delta_x/2)*self.l)
+            else:
+                phi_val = phi(self.x_rel * self.l)
+            return (t <= self.delta_t) * self.height * t / self.delta_t * phi_val
         return _force_n
 
     def __call__(self, x: AFloat, t: AFloat) -> AFloat:
