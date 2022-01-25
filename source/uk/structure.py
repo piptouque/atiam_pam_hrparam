@@ -7,7 +7,7 @@ import scipy.integrate as integrate
 from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
 
-from uk.data import GuitarStringData, GuitarBodyData, AFloat, AInt, ACallableFloat
+from uk.data import GuitarStringData, GuitarBodyData, AFloat, AInt, ACallableFloat, ACallableFloatVec
 
 
 class Force:
@@ -38,11 +38,11 @@ class ForceRamp(Force):
     """[summary]
     """
 
-    def __init__(self, x_rel: float, l: float, height: float, delta_t: float) -> None:
-
+    def __init__(self, x_rel: float, l: float, height: float, delta_x: float, delta_t: float) -> None:
         self.x_rel = x_rel
         self.l = l
         self.height = height
+        self.delta_x = delta_x
         self.delta_t = delta_t
 
     def project_mode(self, phi: Callable[[float], float], extends: Tuple[float, float]) -> Callable[[float], float]:
@@ -54,12 +54,10 @@ class ForceRamp(Force):
                 return 0
         return _force_n
 
-    def __call__(self, x: float, y: float) -> float:
+    def __call__(self, x: AFloat, t: AFloat) -> AFloat:
         x_e = self.x_rel * self.l
-        if np.isclose(x_e, x) and t <= self.delta_t:
-            return self.height * t / self.delta_t
-        else:
-            return 0
+        val = (t <= self.delta_t) * (np.abs(x - x_e) <= self.delta_x/2)
+        return self.height * t / self.delta_t * val
 
 
 class ModalStructure:
@@ -194,9 +192,29 @@ class ModalStructure:
         ddq_u_n = - (c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
         return ddq_u_n
 
-    def y_n(self, q_n: AFloat, n: AInt) -> ACallableFloat:
+    def y_n(self, q_n: AFloat, n: AInt) -> ACallableFloatVec:
+        """[summary]
+
+        Args:
+            q_n (AFloat): The modal responses, a 
+            n (AInt): The mode as an integer or modes as an array of integers.
+
+        Returns:
+            ACallableFloatVec: For each mode, a (x) function 
+                returning the displacement as a time array:
+                    [y_n(t=0), ... y_n(t=t_f)]
+        """
         phi_n = self.phi_n(n)
-        return lambda x: phi_n(x) * q_n
+        if np.ndim(n) != 0:
+            y_n = np.empty(n.shape, dtype=type(Callable))
+            for j in range(len(n)):
+                def y_j(x: float, idx=j):
+                    val = phi_n[j](x) * q_n[j]
+                    return val
+                y_n[j] = y_j
+            return y_n
+        else:
+            return lambda x: phi_n(x) * q_n
 
 
 class GuitarBody(ModalStructure):

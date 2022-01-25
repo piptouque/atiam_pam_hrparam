@@ -10,6 +10,9 @@ AInt = Union[int, npt.NDArray[int]]
 ACallableFloat = Union[Callable[[AFloat], AFloat],
                        npt.NDArray[Callable[[AFloat], AFloat]]]
 
+ACallableFloatVec = Union[Callable[[AFloat], npt.NDArray[float]],
+                          npt.NDArray[Callable[[AFloat], npt.NDArray[float]]]]
+
 
 class GuitarStringData:
     def __init__(self, l: float, t: float, rho: float, e: float, i: float, eta_f: float, eta_a: float, eta_b: float) -> None:

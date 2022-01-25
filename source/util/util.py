@@ -4,9 +4,10 @@ import numpy as np
 import numpy.typing as npt
 
 import json
+from types import SimpleNamespace
 
 
-def load_data_json(cls, path: str, **kwargs) -> object:
+def load_data_json(path: str, cls=SimpleNamespace, **kwargs) -> object:
     """Constructs an object with `cls` factory method from json data at `path`.
 
     Args:
@@ -22,7 +23,7 @@ def load_data_json(cls, path: str, **kwargs) -> object:
         return data
 
 
-def load_data_csv(cls, path: str, **kwargs) -> object:
+def load_data_csv(path: str, cls=SimpleNamespace, **kwargs) -> object:
     """Constructs an object with `cls` factory method from csv data at `path`.
 
     Args:
