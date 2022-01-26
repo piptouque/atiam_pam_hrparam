@@ -2,6 +2,7 @@
 import pathlib
 import copy
 import numpy as np
+import scipy.io.wavfile as wav
 from itertools import chain
 
 from typing import Callable, Union, Tuple, List
@@ -45,10 +46,12 @@ if __name__ == "__main__":
     output_path = pathlib.Path(args.out_dir)
     output_spreadsheet_path = output_path / 'spreadsheets'
     output_figure_path = output_path / 'figures'
+    output_audio_path = output_path / 'sounds'
 
     if log.do_save:
         output_spreadsheet_path.mkdir(parents=True, exist_ok=True)
         output_figure_path.mkdir(parents=True, exist_ok=True)
+        output_audio_path.mkdir(parents=True, exist_ok=True)
 
     if log.do_log:
         print(f"String data: \n {string.data._param_dict}")
@@ -71,9 +74,6 @@ if __name__ == "__main__":
     y_ns = [struct.y_n(q_ns[i], sim.n)
             for (i, struct) in enumerate([string, body])]
 
-    y_n = y_ns[0]
-    ext_force_n_t = ext_force_n_ts[0]
-
     # compute data frames from the result.
     df_q_n = pd.DataFrame(q_ns[0], index=sim.n, columns=t)
     df_dq_n = pd.DataFrame(dq_ns[0], index=sim.n, columns=t)
@@ -82,9 +82,17 @@ if __name__ == "__main__":
         ext_force_n_ts[0], index=sim.n, columns=t)
 
     # save the result as required.
-    x = np.linspace(0, string.data.l, log.nb_points)
+    x = np.linspace(0, string.data.l, log.plot.nb_points)
     xx = np.outer(x, np.ones_like(t))
     tt = np.outer(np.ones_like(x), t)
+
+    y_n = y_ns[0]
+    ext_force_n_t = ext_force_n_ts[0]
+
+    # Get the total displacement from the sum of the modal displacements.
+    y = np.empty_like(t)
+    for j in range(len(y_n)):
+        y += y_n[j](log.audio.x_s_rel * string.data.l)
 
     if log.do_save:
         df_q_n.to_csv(output_spreadsheet_path / 'q_n.csv')
@@ -103,11 +111,11 @@ if __name__ == "__main__":
         ax.set_ylabel('$t$ (s)')
         ax.set_zlabel('$F_{ext}(x, t)$ (N)')
         fig.colorbar(surf, ax=ax)
-        if log.do_log:
-            plt.show()
         if log.do_save:
             fig.savefig(output_figure_path / 'ext_force.svg',
                         facecolor='none', transparent=True)
+        if log.do_log:
+            plt.show()
         plt.close(fig)
 
         # MODAL DISPLACEMENTS of the String y_n
@@ -130,16 +138,17 @@ if __name__ == "__main__":
             ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
         # add heat map
         fig.colorbar(surfs[0], ax=axes)
-        if log.do_log:
-            plt.show()
         if log.do_save:
             fig.savefig(output_figure_path / 'y_n.svg',
                         facecolor='none', transparent=True)
+            wav.write(output_audio_path / 'y.wav', log.audio.sr, y)
+        if log.do_log:
+            plt.show()
+
         plt.close(fig)
 
         # MODAL Excitation ext_force_n_t
         fig = plt.figure(figsize=(8 * (ext_force_n_t.shape[0]+1)//2, 2*6))
-        fig = plt.figure(figsize=(6, 8))
         fig.subplots_adjust(hspace=0.3, wspace=0.4)
         fig.suptitle("Modal excitation force to the string")
         for (j, ext_force_j) in enumerate(ext_force_n_t):
@@ -151,8 +160,9 @@ if __name__ == "__main__":
             ax.set_title(f'$n={j}$')
             ax.set_xlabel('$t$ (s)')
             ax.set_ylabel(f'$F_{j}^S(t)$ (N)')
-        if log.do_log:
-            plt.show()
         if log.do_save:
             fig.savefig(output_figure_path / 'ext_force_n.svg',
                         facecolor='none', transparent=True)
+        if log.do_log:
+            plt.show()
+        plt.close(fig)

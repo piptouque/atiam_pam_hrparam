@@ -1,5 +1,11 @@
 {
-    "do_log": true,
     "do_save": true,
-    "nb_points": 100
+    "do_log": true,
+    "plot": {
+        "nb_points": 100
+    },
+    "audio": {
+        "x_s_rel": 0.2,
+        "sr": 441
+    }
 }
