@@ -1,4 +1,4 @@
-
+from itertools import chain
 import copy
 import numpy as np
 import numpy.typing as npt
@@ -139,6 +139,14 @@ class ModalStructure:
         """
         return NotImplemented
 
+    @abstractmethod
+    def finger_coupling(self, n: AInt, finger_rel_pos: float) -> AFloat:
+        return NotImplemented
+
+    @abstractmethod
+    def bridge_coupling(self, n: AInt, case: str) -> AFloat:
+        return NotImplemented
+
     @abstractproperty
     def extends(self) -> Tuple[float, float]:
         """Extends of the structure along the vibrating dimension.
@@ -249,6 +257,18 @@ class GuitarBody(ModalStructure):
         # no info on the modeshapes for the body.
         return np.full(n.shape, lambda x: 0, dtype=type(Callable)) if np.ndim(n) != 0 else lambda x: 0
 
+    def bridge_coupling(self, n: AInt, case="rigid") -> AFloat:
+        if case == "rigid":
+            return np.zeros((1, len(n)), dtype=float)
+        else:
+            return NotImplemented
+
+    def finger_coupling(self, n: AInt, finger_rel_pos: float) -> AFloat:
+        """
+        Should always be zero since there is no finger constraint on the body.
+        """
+        return np.zeros((1, len(n)), dtype=float)
+
     @ property
     def extends(self) -> Tuple[float, float]:
         # same thing, we don't know.
@@ -313,6 +333,34 @@ class GuitarString(ModalStructure):
         else:
             return lambda x: np.sin(p_n * x)
 
+    def finger_coupling(self, n: AInt, finger_rel_pos: float):
+        """
+        constraint matrix for a finger on the fretboard.
+
+        Args:
+            n (AInt): array of modes;
+            finger_rel_pos (float): finger position on the fretboard
+                relatively to the length of the string.
+        Returns:
+            a_mat (AFloat)
+        """
+        a_mat = np.zeros((1, len(n)), dtype=float)
+        phi_n = self.phi_n(n)
+        for j in range(len(n)):
+            a_mat[0, j] = phi_n[j](self.data.l * finger_rel_pos)
+        return a_mat
+
+    def bridge_coupling(self, n: AInt, case='rigid'):
+        """
+        constraint matrix for a rigid body constraining the string at the bridge.
+        TODO: add flexible case
+        """
+        a_mat = np.zeros((1, len(n)), dtype=float)
+        phi_n = self.phi_n(n)
+        for j in range(len(n)):
+            a_mat[0, j] = phi_n[j](self.data.l)
+        return a_mat
+
     @ property
     def extends(self) -> Tuple[float, float]:
         return (0, self.data.l)
@@ -322,8 +370,13 @@ class ModalSimulation:
     """A constraint solver and simulation for the U-K formulation of modal analysis.
     """
 
-    def __init__(self, nb_modes: int, nb_steps: int, h: float) -> None:
-        self.n = np.arange(nb_modes)
+    def __init__(self, nb_modes: (int or list), nb_steps: int, h: float, num_struct=None) -> None:
+        if isinstance(nb_modes, int):
+            if num_struct is None:
+                raise TypeError("number of structures num_struct should be defined if nb_modes is int")
+            self.n = [np.arange(nb_modes)]*num_struct
+        else:
+            self.n = [np.arange(nb_mode) for nb_mode in nb_modes]
         self.nb_steps = nb_steps
         self.h = h
 
@@ -333,8 +386,8 @@ class ModalSimulation:
             'h': h
         }
 
-    @staticmethod
-    def solve_constraints(structs: List[ModalStructure], a_ns: List[List[npt.NDArray[float]]], b_ns: List[npt.NDArray[float]]) -> List[List[npt.NDArray[float]]]:
+    # @staticmethod
+    def solve_constraints(self, structs: List[ModalStructure], a_ns: List[List[npt.NDArray[float]]]) -> List[List[npt.NDArray[float]]]:
         """
         For now, a_ns, b_ns are constants in time.
         a_ns[i] are the list of constraints applied on sub-structure i.
@@ -345,21 +398,24 @@ class ModalSimulation:
             b_ns (List[npt.NDArray[float]]): [description]
             n (AInt): [description]
         """
-        assert len(a_ns) == len(structs) and \
-            len(b_ns) == len(structs)
+        assert len(a_ns) == len(structs)
         #
-        a_mat = np.array(a_ns)
-        b_vec = np.array(b_ns)
+        a_mat = np.hstack(a_ns)
+        #b_vec = np.array(b_ns)
 
-        m_halfinv_mat = np.diag(chain.from_iterable(
-            [np.pow(struct.m_n(self.n), -0.5) for struct in structs]))
+        #print("We're here")
+        #print([np.power(struct.m_n(self.n), -0.5) for struct in structs])
+        m_halfinv_mat = np.diag(list(chain.from_iterable(
+            [np.power(struct.m_n(self.n[s]), -0.5) for s, struct in enumerate(structs)])))
         #
+        #print(m_halfinv_mat.shape)
+        #print(a_mat.shape)
         b_mat = a_mat @ m_halfinv_mat
         b_plus_mat = np.linalg.pinv(b_mat)
-        w_mat = 1 - m_halfinv_mat * b_plus_mat * a_mat
-        return None
+        w_mat = np.eye(sum([len(self.n[s]) for s in range(len(self.n))])) - m_halfinv_mat @ b_plus_mat @ a_mat
+        return w_mat
 
-    def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat]) -> Tuple[List[npt.NDArray[AFloat]]]:
+    def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat], finger_constraints: List[float]) -> Tuple[List[npt.NDArray[AFloat]]]:
         """Solve the constrained system.
         Based on the velocity-Verlet algorithm described in:
 
@@ -378,11 +434,12 @@ class ModalSimulation:
             Tuple[List[npt.NDArray[AFloat]]]: Tuple of computed times, modal responses, associated derivative and modal external forces for each modal structure.
         """
         assert len(structs) == len(ext_forces) and len(
-            structs) == len(q_n_is) and len(structs) == len(dq_n_is)
+            structs) == len(q_n_is) and len(structs) == len(dq_n_is) \
+            and len(finger_constraints) == len(structs)
 
         def _make_vec():
             if np.ndim(self.n) != 0:
-                return [np.zeros(self.n.shape + (self.nb_steps,), dtype=float)
+                return [np.zeros(self.n[i].shape + (self.nb_steps,), dtype=float)
                         for i in range(len(structs))]
             else:
                 return [np.zeros((self.nb_steps,), dtype=float) for i in range(len(structs))]
@@ -392,11 +449,21 @@ class ModalSimulation:
         ddq_u_ns = _make_vec()
         dq_half_ns = _make_vec()
         ext_force_n_ts = _make_vec()
+        a_ns = []
         for i in range(len(structs)):
             q_ns[i][..., 0] = q_n_is[i]
             dq_ns[i][..., 0] = dq_n_is[i]
+            a_bridge = structs[i].bridge_coupling(self.n[i], "rigid")
+            a_finger = structs[i].finger_coupling(self.n[i], finger_constraints[i])
+            a_ns.append(np.vstack((a_bridge, a_finger)))
         #
         t = np.arange(self.nb_steps) * self.h
+        w_mat = self.solve_constraints(structs, a_ns)
+        w_mat_list = []
+        idx = np.cumsum([len(num_mode) for num_mode in self.n])
+        idx = np.insert(idx, 0, 0)
+        for i in range(len(structs)):
+            w_mat_list.append(w_mat[idx[i]:idx[i+1], idx[i]:idx[i+1]])
         for k in range(1, self.nb_steps):
             for i in range(len(structs)):
                 struct = structs[i]
@@ -404,18 +471,18 @@ class ModalSimulation:
                     0.5 * self.h**2 * ddq_ns[i][..., k-1]
                 dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
                     0.5 * self.h * ddq_ns[i][..., k-1]
-                ext_force_n = struct.ext_force_n(ext_forces[i], self.n)
+                ext_force_n = struct.ext_force_n(ext_forces[i], self.n[i])
                 if np.ndim(self.n) != 0:
-                    for j in range(len(self.n)):
+                    for j in range(len(self.n[i])):
                         ext_force_n_ts[i][j, k] = ext_force_n[j](t[k])
                 else:
                     ext_force_n_ts[i][..., k] = ext_force_n(t[k])
                 ddq_u_ns[i][..., k] = struct.solve_unconstrained(
-                    q_ns[i][..., k], dq_half_ns[i][..., k], self.n, ext_force_n_ts[i][..., k])
+                    q_ns[i][..., k], dq_half_ns[i][..., k], self.n[i], ext_force_n_ts[i][..., k])
                 # solve constraints
-                # TODO
                 #
-                ddq_ns[i][..., k] = ddq_u_ns[i][..., k]
+                ddq_ns[i][..., k] = w_mat_list[i] @ ddq_u_ns[i][..., k]
+                #ddq_ns[i][..., k] = (w_mat @ np.vstack(ddq_u_ns)[..., k])[idx[i]:idx[i+1]]
                 #
                 dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
                     self.h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])

@@ -33,6 +33,8 @@ if __name__ == "__main__":
                         help='Logging config file path')
     parser.add_argument('--out_dir', default=None, type=str,
                         help='Output directory for output data')
+    parser.add_argument('--finger_pos', default=0, type=float,
+                        help='Finger position on soundboard')
     args = parser.parse_args()
 
     # Loading config from config files
@@ -61,25 +63,27 @@ if __name__ == "__main__":
     # SIMULATION
     # There is no external force applied to the body.
     ext_force_body = ForceNull()
+    # List of finger constraints, there is none on the body
+    finger_constraints = [args.finger_pos, 0]
 
     # The string and body are initially at rest.
-    q_n_is = [np.zeros(sim.n.shape, dtype=float) for i in range(2)]
-    dq_n_is = [np.zeros(sim.n.shape, dtype=float) for i in range(2)]
+    q_n_is = [np.zeros(sim.n[i].shape, dtype=float) for i in range(2)]
+    dq_n_is = [np.zeros(sim.n[i].shape, dtype=float) for i in range(2)]
 
     # Run the simulation / solve the system.
     t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = sim.run(
         [string, body], [ext_force_string, ext_force_body],
-        q_n_is, dq_n_is)
+        q_n_is, dq_n_is, finger_constraints)
 
-    y_ns = [struct.y_n(q_ns[i], sim.n)
+    y_ns = [struct.y_n(q_ns[i], sim.n[i])
             for (i, struct) in enumerate([string, body])]
 
     # compute data frames from the result.
-    df_q_n = pd.DataFrame(q_ns[0], index=sim.n, columns=t)
-    df_dq_n = pd.DataFrame(dq_ns[0], index=sim.n, columns=t)
-    df_ddq_n = pd.DataFrame(ddq_ns[0], index=sim.n, columns=t)
+    df_q_n = pd.DataFrame(q_ns[0], index=sim.n[0], columns=t)
+    df_dq_n = pd.DataFrame(dq_ns[0], index=sim.n[0], columns=t)
+    df_ddq_n = pd.DataFrame(ddq_ns[0], index=sim.n[0], columns=t)
     df_ext_force_n_t = pd.DataFrame(
-        ext_force_n_ts[0], index=sim.n, columns=t)
+        ext_force_n_ts[0], index=sim.n[0], columns=t)
 
     # save the result as required.
     x = np.linspace(0, string.data.l, log.plot.nb_points)
@@ -118,6 +122,20 @@ if __name__ == "__main__":
             plt.show()
         plt.close(fig)
 
+        # TOTAL DISPLACEMENT of the string
+        fig = plt.figure(figsize=(8, 6))
+        ax = fig.add_subplot(1, 1, 1)
+        surf = ax.plot(t, y)
+        ax.set_title(f"Total displacement of the string at {log.audio.x_s_rel}")
+        ax.set_xlabel('$t$ (s)')
+        ax.set_ylabel('$y(t)$ (m)')
+        if log.do_save:
+            fig.savefig(output_figure_path / 'tot_disp.svg',
+                        facecolor='none', transparent=True)
+        if log.do_log:
+            plt.show()
+        plt.close(fig)
+
         # MODAL DISPLACEMENTS of the String y_n
         fig = plt.figure(figsize=(8 * (len(y_n)+1)//2, 2*6))
         fig.subplots_adjust(hspace=0.1, wspace=0.4)
@@ -141,7 +159,7 @@ if __name__ == "__main__":
         if log.do_save:
             fig.savefig(output_figure_path / 'y_n.svg',
                         facecolor='none', transparent=True)
-            wav.write(output_audio_path / 'y.wav', log.audio.sr, y)
+            wav.write(output_audio_path / 'y.wav', int(1/sim.h), y)
         if log.do_log:
             plt.show()
 
