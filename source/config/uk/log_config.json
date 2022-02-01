@@ -1,11 +1,12 @@
 {
     "do_save": true,
     "do_log": true,
+    "modal_plots": false,
     "plot": {
-        "nb_points": 100
+        "nb_points": 1000
     },
     "audio": {
-        "x_s_rel": 0.2,
+        "x_s_rel": 0.95,
         "sr": 441
     }
 }

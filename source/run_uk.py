@@ -94,7 +94,7 @@ if __name__ == "__main__":
     ext_force_n_t = ext_force_n_ts[0]
 
     # Get the total displacement from the sum of the modal displacements.
-    y = np.empty_like(t)
+    y = np.zeros_like(t)
     for j in range(len(y_n)):
         y += y_n[j](log.audio.x_s_rel * string.data.l)
 
@@ -137,50 +137,52 @@ if __name__ == "__main__":
         plt.close(fig)
 
         # MODAL DISPLACEMENTS of the String y_n
-        fig = plt.figure(figsize=(8 * (len(y_n)+1)//2, 2*6))
-        fig.subplots_adjust(hspace=0.1, wspace=0.4)
-        fig.suptitle("Modal displacements of the string (unconstrained)")
-        axes = []
-        surfs = []
-        for (j, y_j) in enumerate(y_n):
-            ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
-            axes.append(ax)
-            y_x = y_j(xx)
-            #
-            surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
-            surfs.append(surf)
-            #
-            ax.set_title(f'$n={j}$')
-            ax.set_xlabel('$x$ (m)')
-            ax.set_ylabel('$t$ (s)')
-            ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
-        # add heat map
-        fig.colorbar(surfs[0], ax=axes)
-        if log.do_save:
-            fig.savefig(output_figure_path / 'y_n.svg',
-                        facecolor='none', transparent=True)
-            wav.write(output_audio_path / 'y.wav', int(1/sim.h), y)
-        if log.do_log:
-            plt.show()
+        if log.modal_plots:
+            fig = plt.figure(figsize=(8 * (len(y_n)+1)//2, 2*6))
+            fig.subplots_adjust(hspace=0.1, wspace=0.4)
+            fig.suptitle("Modal displacements of the string (unconstrained)")
+            axes = []
+            surfs = []
+            for (j, y_j) in enumerate(y_n):
+                ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
+                axes.append(ax)
+                y_x = y_j(xx)
+                #
+                surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
+                surfs.append(surf)
+                #
+                ax.set_title(f'$n={j}$')
+                ax.set_xlabel('$x$ (m)')
+                ax.set_ylabel('$t$ (s)')
+                ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
+            # add heat map
+            fig.colorbar(surfs[0], ax=axes)
+            if log.do_save:
+                fig.savefig(output_figure_path / 'y_n.svg',
+                            facecolor='none', transparent=True)
+                wav.write(output_audio_path / 'y.wav', int(1/sim.h), y)
+            if log.do_log:
+                plt.show()
 
-        plt.close(fig)
+            plt.close(fig)
 
         # MODAL Excitation ext_force_n_t
-        fig = plt.figure(figsize=(8 * (ext_force_n_t.shape[0]+1)//2, 2*6))
-        fig.subplots_adjust(hspace=0.3, wspace=0.4)
-        fig.suptitle("Modal excitation force to the string")
-        for (j, ext_force_j) in enumerate(ext_force_n_t):
-            ax = fig.add_subplot(2, len(ext_force_n_t) //
-                                 2+1, j+1)
-            #
-            ax.plot(t, ext_force_j)
-            #
-            ax.set_title(f'$n={j}$')
-            ax.set_xlabel('$t$ (s)')
-            ax.set_ylabel(f'$F_{j}^S(t)$ (N)')
-        if log.do_save:
-            fig.savefig(output_figure_path / 'ext_force_n.svg',
-                        facecolor='none', transparent=True)
-        if log.do_log:
-            plt.show()
-        plt.close(fig)
+        if log.modal_plots:
+            fig = plt.figure(figsize=(8 * (ext_force_n_t.shape[0]+1)//2, 2*6))
+            fig.subplots_adjust(hspace=0.3, wspace=0.4)
+            fig.suptitle("Modal excitation force to the string")
+            for (j, ext_force_j) in enumerate(ext_force_n_t):
+                ax = fig.add_subplot(2, len(ext_force_n_t) //
+                                     2+1, j+1)
+                #
+                ax.plot(t, ext_force_j)
+                #
+                ax.set_title(f'$n={j}$')
+                ax.set_xlabel('$t$ (s)')
+                ax.set_ylabel(f'$F_{j}^S(t)$ (N)')
+            if log.do_save:
+                fig.savefig(output_figure_path / 'ext_force_n.svg',
+                            facecolor='none', transparent=True)
+            if log.do_log:
+                plt.show()
+            plt.close(fig)
