@@ -1,0 +1,14 @@
+{
+    "do_save": true,
+    "do_log": true,
+    "plot": {
+        "do_win": true,
+        "do_whole": true
+    },
+    "spec": {
+        "n_fft": 1024,
+        "n_overlap": 256,
+        "win_length": 1024,
+        "win": "blackman"
+    }
+}

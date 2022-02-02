@@ -7,6 +7,25 @@ import json
 from types import SimpleNamespace
 
 
+def compute_frf(x: npt.NDArray[np.complex128], y: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
+    """Computes the Frequency Response Function (FRF) of an (input, output) couple of spectres.
+
+    Args:
+        x (npt.NDArray[np.complex128]): Spectre of input signal
+        y (npt.NDArray[np.complex128]): Spectre of output signal
+
+    Returns:
+        npt.NDArray[np.complex128]: FRF of output y with input x.
+    """
+    s_yx = y * np.conj(x)
+    s_xx = x * np.conj(x)
+    return s_yx / s_xx
+
+
+def to_db(data: npt.NDArray[float]) -> npt.NDArray[float]:
+    return 20 * np.log(data)
+
+
 def load_data_json(path: str, cls=SimpleNamespace, **kwargs) -> object:
     """Constructs an object with `cls` factory method from json data at `path`.
 

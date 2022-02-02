@@ -24,6 +24,21 @@
                 "--out_dir",
                 "${cwd}/out/uk/"
             ]
+        },
+        {
+            "name": "Test: Experimental Data",
+            "type": "python",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "program": "${cwd}/source/run_expr.py",
+            "args": [
+                "--data",
+                "${cwd}/data/expr/2022_01_27/FirstStringGuitar_HammerBridge_1.mat",
+                "--log",
+                "${cwd}/source/config/expr/log_config.json",
+                "--out_dir",
+                "${cwd}/out/expr/"
+            ]
         }
     ]
 }
