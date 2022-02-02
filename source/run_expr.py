@@ -69,9 +69,9 @@ if __name__ == "__main__":
     ft_ham = np.fft.fft(data_ham, n=n_fft)
     ft_acc = np.fft.fft(data_acc, n=n_fft)
     ft_mic = np.fft.fft(data_mic, n=n_fft)
-    # frf_res = compute_frf(ft_ham, ft_acc)
-    frf_res = data['FRF']
-    frf_res = np.concatenate((frf_res, np.flip(frf_res)))
+    frf_res = compute_frf(ft_ham, ft_acc)
+    # frf_res = data['FRF']
+    # frf_res = np.concatenate((data['FRF'], np.flip(data['FRF'])))
     #
     ft_ham_win = np.fft.fft(data_ham_win, n=n_fft_win)
     ft_acc_win = np.fft.fft(data_acc_win, n=n_fft_win)
