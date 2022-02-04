@@ -60,6 +60,11 @@ if __name__ == "__main__":
         print(f"Body data: \n {body.data._param_dict}")
         print(f"Simulation config \n {sim._param_dict}")
 
+    fmax_S = string.f_n(sim.n[0][-1])
+    fmax_B = body.f_n(sim.n[1][-1])
+    if 2*np.pi*fmax_S*sim.h > 2 or 2*np.pi*fmax_B*sim.h > 2:
+        raise ValueError("Simulation is going to be unstable, reduce the time step.")
+
     # SIMULATION
     # There is no external force applied to the body.
     ext_force_body = ForceNull()

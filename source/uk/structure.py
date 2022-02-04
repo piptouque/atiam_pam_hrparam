@@ -235,7 +235,7 @@ class GuitarBody(ModalStructure):
         self.data = data
 
     def _find_n(self, ids: AInt) -> AInt:
-        if np.ndim(ids) != 0:
+        if np.ndim(ids) > 1:
             n = np.empty_like(ids)
             for (j, idx) in enumerate(ids):
                 n_idx, = np.where(self.data.n == idx)
