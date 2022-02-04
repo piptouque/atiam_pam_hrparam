@@ -1,0 +1,33 @@
+{
+    "win": {
+        "ham": {
+            "name": "boxcar",
+            "length": 80,
+            "kwargs": {}
+        },
+        "acc": {
+            "attack_length": 400,
+            "name": "exponential",
+            "kwargs": {
+                "center": 0,
+                "tau": 10e3
+            }
+        },
+        "mic": {
+            "attack_length": 400,
+            "name": "exponential",
+            "kwargs": {
+                "center": 0,
+                "tau": 10e3
+            }
+        }
+    },
+    "spec": {
+        "n_fft": 1024,
+        "n_overlap": 256,
+        "win": {
+            "length": 1024,
+            "name": "blackman"
+        }
+    }
+}
