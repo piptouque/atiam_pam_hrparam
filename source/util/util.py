@@ -1,4 +1,4 @@
-
+import os
 import pandas as pd
 import numpy as np
 import numpy.typing as npt
@@ -7,7 +7,9 @@ import json
 from types import SimpleNamespace
 
 
-def compute_frf(x: npt.NDArray[np.complex128], y: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
+def compute_frf(
+    x: npt.NDArray[np.complex128], y: npt.NDArray[np.complex128]
+) -> npt.NDArray[np.complex128]:
     """Computes the Frequency Response Function (FRF) of an (input, output) couple of spectres.
 
     Args:
@@ -36,9 +38,8 @@ def load_data_json(path: str, cls=SimpleNamespace, **kwargs) -> object:
     Returns:
         object: constructed object.
     """
-    with open(path, mode='r') as config:
-        data = json.load(
-            config, object_hook=lambda d: cls(**d, **kwargs))
+    with open(path, mode="r") as config:
+        data = json.load(config, object_hook=lambda d: cls(**d, **kwargs))
         return data
 
 

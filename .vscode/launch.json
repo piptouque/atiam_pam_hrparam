@@ -32,10 +32,12 @@
             "console": "integratedTerminal",
             "program": "${cwd}/source/run_expr.py",
             "args": [
-                "--data",
-                "${cwd}/data/expr/2022_01_27/FirstStringGuitar_HammerBridge_1.mat",
+                "--data_dir",
+                "${cwd}/data/expr/",
                 "--log",
                 "${cwd}/source/config/expr/log_config.json",
+                "--config",
+                "${cwd}/source/config/expr/analysis_config.json",
                 "--out_dir",
                 "${cwd}/out/expr/"
             ]
