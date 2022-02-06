@@ -113,6 +113,8 @@ Final.time = time;
 Final.fs = fs;
 Final.fen.start = Indice_deb
 Final.fen.length = largeur
+
 file_name = 'FirstStringGuitar_CopperWired01mm_FifthFret_1.mat';
+Final.excitation_type = 'wire'
 
 save(file_name, 'Final');
