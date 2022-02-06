@@ -60,6 +60,8 @@ if __name__ == "__main__":
         print(f"Body data: \n {body.data._param_dict}")
         print(f"Simulation config \n {sim._param_dict}")
 
+    # print(body.phi_n(sim.n[1]))
+    # print(body.m_n(sim.n[1]))
     fmax_S = string.f_n(sim.n[0][-1])
     fmax_B = body.f_n(sim.n[1][-1])
     if 2*np.pi*fmax_S*sim.h > 2 or 2*np.pi*fmax_B*sim.h > 2:
@@ -141,6 +143,9 @@ if __name__ == "__main__":
             plt.show()
         plt.close(fig)
 
+        if log.audio.save:
+            wav.write(output_audio_path / 'y.wav', int(1/sim.h), y/np.max(y))
+
         # MODAL DISPLACEMENTS of the String y_n
         if log.modal_plots:
             fig = plt.figure(figsize=(8 * (len(y_n)+1)//2, 2*6))
@@ -165,7 +170,6 @@ if __name__ == "__main__":
             if log.do_save:
                 fig.savefig(output_figure_path / 'y_n.svg',
                             facecolor='none', transparent=True)
-                wav.write(output_audio_path / 'y.wav', int(1/sim.h), y)
             if log.do_log:
                 plt.show()
 

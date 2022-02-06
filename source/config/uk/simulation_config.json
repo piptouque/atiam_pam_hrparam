@@ -1,5 +1,6 @@
 {
     "nb_modes": [10,5],
-    "nb_steps": 50000,
-    "h": 0.00001
+    "nb_steps": 10000,
+    "h": 0.0001,
+    "coupling": "flexible"
 }

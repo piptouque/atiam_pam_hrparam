@@ -7,6 +7,6 @@
     },
     "audio": {
         "x_s_rel": 0.95,
-        "sr": 441
+        "save": true
     }
 }

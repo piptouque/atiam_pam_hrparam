@@ -77,7 +77,7 @@ class GuitarStringData:
 
 
 class GuitarBodyData:
-    def __init__(self, n: AInt, f_n: AFloat, ksi_n: AFloat, m_n: AFloat) -> None:
+    def __init__(self, n: AInt, f_n: AFloat, ksi_n: AFloat, m_n: AFloat, phi_n: AFloat) -> None:
         """Guitar body parameters.
         Measured beforehand.
 
@@ -85,12 +85,14 @@ class GuitarBodyData:
             n (AInt): Modes,
             f_n (AFloat): Modal frequencies,
             ksi_n (AFloat): Modal damping ratios,
-            m_n (AFloat): Modal masses.
+            m_n (AFloat): Modal masses,
+            phi_n (AFloat): Modeshapes real value at the bridge.
         """
         self.n = n
         self.f_n = f_n
         self.ksi_n = ksi_n
         self.m_n = m_n
+        self.phi_n = phi_n
 
         if np.ndim(n) != 0:
             assert (len(n) == len(f_n)) and (len(n) == len(
@@ -104,5 +106,6 @@ class GuitarBodyData:
             'n': self.n,
             'f_n': self.f_n,
             'ksi_n': self.ksi_n,
-            'm_n': self.m_n
+            'm_n': self.m_n,
+            'phi_n': self.phi_n
         }
