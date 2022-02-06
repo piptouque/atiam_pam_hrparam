@@ -235,7 +235,11 @@ class GuitarBody(ModalStructure):
         self.data = data
 
     def _find_n(self, ids: AInt) -> AInt:
-        if np.ndim(ids) > 1:
+        # print("In _find_n")
+        # print(self.data.n)
+        # print(ids)
+        # print(np.ndim(ids))
+        if np.ndim(ids) > 0:
             n = np.empty_like(ids)
             for (j, idx) in enumerate(ids):
                 n_idx, = np.where(self.data.n == idx)
@@ -255,13 +259,18 @@ class GuitarBody(ModalStructure):
 
     def phi_n(self, n: AInt) -> AFloat:
         # no info on the modeshapes for the body.
-        return np.full(n.shape, lambda x: 0, dtype=type(Callable)) if np.ndim(n) != 0 else lambda x: 0
+        # we enforce a constant value of the bridge modeshapes
+        # FIX version multidimensionnelle ne marche pas
+        return np.array([lambda x: self.data.phi_n[ids] for ids in n], dtype=type(Callable)) if np.ndim(n) != 0 else lambda x: self.data.phi_n[n]
 
     def bridge_coupling(self, n: AInt, case="rigid") -> AFloat:
         if case == "rigid":
             return np.zeros((1, len(n)), dtype=float)
-        else:
-            return NotImplemented
+        elif case == "flexible":
+            a_mat = np.zeros((1, len(n)), dtype=float)
+            for j in range(len(n)):
+                a_mat[0, j] = -self.phi_n(j)(0)
+            return a_mat
 
     def finger_coupling(self, n: AInt, finger_rel_pos: float) -> AFloat:
         """
@@ -353,7 +362,6 @@ class GuitarString(ModalStructure):
     def bridge_coupling(self, n: AInt, case='rigid'):
         """
         constraint matrix for a rigid body constraining the string at the bridge.
-        TODO: add flexible case
         """
         a_mat = np.zeros((1, len(n)), dtype=float)
         phi_n = self.phi_n(n)
@@ -370,7 +378,7 @@ class ModalSimulation:
     """A constraint solver and simulation for the U-K formulation of modal analysis.
     """
 
-    def __init__(self, nb_modes: (int or list), nb_steps: int, h: float, num_struct=None) -> None:
+    def __init__(self, nb_modes: (int or list), nb_steps: int, h: float, num_struct=None, coupling="rigid") -> None:
         if isinstance(nb_modes, int):
             if num_struct is None:
                 raise TypeError("number of structures num_struct should be defined if nb_modes is int")
@@ -379,11 +387,13 @@ class ModalSimulation:
             self.n = [np.arange(nb_mode) for nb_mode in nb_modes]
         self.nb_steps = nb_steps
         self.h = h
+        self.coupling = coupling
 
         self._param_dict = {
             'n': self.n,
             'nb_steps': self.nb_steps,
-            'h': h
+            'h': h,
+            'coupling': self.coupling
         }
 
     # @staticmethod
@@ -403,13 +413,9 @@ class ModalSimulation:
         a_mat = np.hstack(a_ns)
         #b_vec = np.array(b_ns)
 
-        #print("We're here")
-        #print([np.power(struct.m_n(self.n), -0.5) for struct in structs])
         m_halfinv_mat = np.diag(list(chain.from_iterable(
             [np.power(struct.m_n(self.n[s]), -0.5) for s, struct in enumerate(structs)])))
         #
-        #print(m_halfinv_mat.shape)
-        #print(a_mat.shape)
         b_mat = a_mat @ m_halfinv_mat
         b_plus_mat = np.linalg.pinv(b_mat)
         w_mat = np.eye(sum([len(self.n[s]) for s in range(len(self.n))])) - m_halfinv_mat @ b_plus_mat @ a_mat
@@ -453,9 +459,10 @@ class ModalSimulation:
         for i in range(len(structs)):
             q_ns[i][..., 0] = q_n_is[i]
             dq_ns[i][..., 0] = dq_n_is[i]
-            a_bridge = structs[i].bridge_coupling(self.n[i], "rigid")
+            a_bridge = structs[i].bridge_coupling(self.n[i], self.coupling)
             a_finger = structs[i].finger_coupling(self.n[i], finger_constraints[i])
             a_ns.append(np.vstack((a_bridge, a_finger)))
+            print(a_ns)
         #
         t = np.arange(self.nb_steps) * self.h
         w_mat = self.solve_constraints(structs, a_ns)
