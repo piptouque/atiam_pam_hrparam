@@ -80,8 +80,8 @@ def perform_analysis(
     sr = np.round(1 / (times[1] - times[0])).astype(int)
     n_fft = np.power(2, np.ceil(np.log2(len(times)))).astype(int)
     #
-    # excitation_kind = "hammer"
-    excitation_kind = "wire"
+    excitation_kind = "hammer"
+    # excitation_kind = "wire"
     # excitation_kind = data_raw["excitation_kind"]
     #
     # Signals and windowed signals
