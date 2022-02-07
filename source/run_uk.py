@@ -84,6 +84,8 @@ if __name__ == "__main__":
 
     y_ns = [struct.y_n(q_ns[i], sim.n[i])
             for (i, struct) in enumerate([string, body])]
+    dy_ns = [struct.y_n(dq_ns[i], sim.n[i])
+             for (i, struct) in enumerate([string, body])]
 
     # compute data frames from the result.
     df_q_n = pd.DataFrame(q_ns[0], index=sim.n[0], columns=t)
@@ -98,12 +100,20 @@ if __name__ == "__main__":
     tt = np.outer(np.ones_like(x), t)
 
     y_n = y_ns[0]
+    dy_n = dy_ns[0]
     ext_force_n_t = ext_force_n_ts[0]
 
     # Get the total displacement from the sum of the modal displacements.
     y = np.zeros_like(t)
     for j in range(len(y_n)):
         y += y_n[j](log.audio.x_s_rel * string.data.l)
+
+    # Get the total speed from the sum of the modal speeds.
+    dy = np.zeros_like(t)
+    dy_bridge = np.zeros_like(t)
+    for j in range(len(dy_n)):
+        dy += dy_n[j](log.audio.x_s_rel * string.data.l)
+        dy_bridge += dy_n[j](string.data.l)
 
     if log.do_save:
         df_q_n.to_csv(output_spreadsheet_path / 'q_n.csv')
@@ -117,7 +127,7 @@ if __name__ == "__main__":
         ax = fig.add_subplot(1, 1, 1, projection='3d')
         f_x = ext_force_string(xx, tt)
         surf = ax.plot_surface(xx, tt, f_x, cmap='coolwarm')
-        ax.set_title(f'Excitation force applied to the string')
+        ax.set_title('Excitation force applied to the string')
         ax.set_xlabel('$x$ (m)')
         ax.set_ylabel('$t$ (s)')
         ax.set_zlabel('$F_{ext}(x, t)$ (N)')
@@ -145,6 +155,8 @@ if __name__ == "__main__":
 
         if log.audio.save:
             wav.write(output_audio_path / 'y.wav', int(1/sim.h), y/np.max(y))
+            wav.write(output_audio_path / 'dy.wav', int(1/sim.h), dy/np.max(dy))
+            wav.write(output_audio_path / 'dy_bridge.wav', int(1/sim.h), dy_bridge/np.max(dy_bridge))
 
         # MODAL DISPLACEMENTS of the String y_n
         if log.modal_plots:
