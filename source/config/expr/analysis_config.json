@@ -5,6 +5,11 @@
             "length": 80,
             "kwargs": {}
         },
+        "wire": {
+            "name": "boxcar",
+            "attack_length": 400,
+            "kwargs": {}
+        },
         "acc": {
             "attack_length": 400,
             "name": "exponential",

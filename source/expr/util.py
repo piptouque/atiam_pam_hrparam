@@ -47,6 +47,22 @@ def find_win_start(sig: npt.NDArray[float], attack_length: int) -> int:
     return idx_start
 
 
+def make_linramp(size: int, start: int, stop: int) -> npt.NDArray[float]:
+    """Linear force ramp
+
+    Args:
+        size (int): [description]
+        start (int): [description]
+        stop (int): [description]
+
+    Returns:
+        npt.NDArray[float]: [description]
+    """
+    r = np.zeros(size)
+    r[start:stop] = np.arange(stop - start) / (stop - start)
+    return r
+
+
 def perform_analysis(
     data_raw: Dict[str, np.ndarray], conf: object
 ) -> Dict[str, np.ndarray]:
@@ -64,32 +80,13 @@ def perform_analysis(
     sr = np.round(1 / (times[1] - times[0])).astype(int)
     n_fft = np.power(2, np.ceil(np.log2(len(times)))).astype(int)
     #
-    data_ham = data_raw["marteau"]["brut"]
-    data_acc = data_raw["accelero"]["brut"]
-    data_mic = data_raw["micro"]["brut"]
-    # Windows
-    # -- Hammer
-    idx_ham_win_start = find_win_start(data_ham, conf.win.ham.length // 2)
-    idx_ham_win_stop = idx_ham_win_start + conf.win.ham.length
-    ham_win_kwargs = vars(conf.win.ham.kwargs)
-    # FIXME: can't choose the args  by keyword in get_window
-    win_ham = sig.get_window(
-        (conf.win.ham.name, *ham_win_kwargs.values()),
-        idx_ham_win_stop - idx_ham_win_start,
-    )
-    times_ham_win = times[idx_ham_win_start:idx_ham_win_stop]
-    data_ham_win = win_ham * data_ham[idx_ham_win_start:idx_ham_win_stop]
-    # -- Accelerometer
-    idx_acc_win_start = find_win_start(data_acc, conf.win.acc.attack_length)
-    idx_acc_win_stop = len(times)
-    acc_win_kwargs = vars(conf.win.acc.kwargs)
-    win_acc = sig.get_window(
-        (conf.win.acc.name, *acc_win_kwargs.values()),
-        idx_acc_win_stop - idx_acc_win_start,
-    )
-    times_acc_win = times[idx_acc_win_start:idx_acc_win_stop]
-    data_acc_win = win_acc * data_acc[idx_acc_win_start:idx_acc_win_stop]
+    excitation_kind = "hammer"
+    # excitation_kind = "wire"
+    # excitation_kind = data_raw["excitation_kind"]
+    #
+    # Signals and windowed signals
     # -- Microphone
+    data_mic = data_raw["micro"]["brut"]
     idx_mic_win_start = find_win_start(data_mic, conf.win.mic.attack_length)
     idx_mic_win_stop = len(times)
     mic_win_kwargs = vars(conf.win.mic.kwargs)
@@ -99,26 +96,62 @@ def perform_analysis(
     )
     times_mic_win = times[idx_mic_win_start:idx_mic_win_stop]
     data_mic_win = win_mic * data_mic[idx_mic_win_start:idx_mic_win_stop]
-    #
+    # -- Hammer
+    idx_excit_win_start = None
+    idx_excit_win_stop = None
+    data_excit = None
+    conf_excit_win = None
+    if excitation_kind == "hammer":
+        data_excit = data_raw["marteau"]["brut"]
+        idx_excit_win_start = find_win_start(data_excit, conf.win.ham.length // 2)
+        idx_excit_win_stop = idx_excit_win_start + conf.win.ham.length
+        conf_excit_win = conf.win.ham
+    elif excitation_kind == "wire":
+        # the onset of the signal in the microphone
+        # should be the end of the excitation by the wire.
+        idx_excit_win_stop = find_win_start(data_mic, conf.win.mic.attack_length)
+        idx_excit_win_start = idx_excit_win_stop - conf.win.wire.attack_length
+        data_excit = make_linramp(len(times), idx_excit_win_start, idx_excit_win_stop)
+        conf_excit_win = conf.win.wire
+    kwargs_excit_win = vars(conf_excit_win.kwargs)
+    # FIXME: can't choose the args  by keyword in get_window
+    win_excit = sig.get_window(
+        (conf_excit_win.name, *kwargs_excit_win.values()),
+        idx_excit_win_stop - idx_excit_win_start,
+    )
+    times_excit_win = times[idx_excit_win_start:idx_excit_win_stop]
+    data_excit_win = win_excit * data_excit[idx_excit_win_start:idx_excit_win_stop]
+    # -- Accelerometer
+    data_acc = data_raw["accelero"]["brut"]
+    idx_acc_win_start = find_win_start(data_acc, conf.win.acc.attack_length)
+    idx_acc_win_stop = len(times)
+    acc_win_kwargs = vars(conf.win.acc.kwargs)
+    win_acc = sig.get_window(
+        (conf.win.acc.name, *acc_win_kwargs.values()),
+        idx_acc_win_stop - idx_acc_win_start,
+    )
+    times_acc_win = times[idx_acc_win_start:idx_acc_win_stop]
+    data_acc_win = win_acc * data_acc[idx_acc_win_start:idx_acc_win_stop]
+    # Frequential responses
     freqs = np.fft.fftfreq(n_fft) * sr
     freqs_win = np.fft.fftfreq(n_fft) * sr
     # Over a set time frame
-    ft_ham = np.fft.fft(data_ham, n=n_fft)
+    ft_excit = np.fft.fft(data_excit, n=n_fft)
     ft_acc = np.fft.fft(data_acc, n=n_fft)
     ft_mic = np.fft.fft(data_mic, n=n_fft)
-    frf = compute_frf(ft_ham, ft_acc)
+    frf = compute_frf(ft_excit, ft_acc)
     imp = np.real(np.fft.ifft(frf, n=n_fft))  # len(times)))
     #
-    ft_ham_win = np.fft.fft(data_ham_win, n=n_fft)
+    ft_excit_win = np.fft.fft(data_excit_win, n=n_fft)
     ft_acc_win = np.fft.fft(data_acc_win, n=n_fft)
     ft_mic_win = np.fft.fft(data_mic_win, n=n_fft)
-    frf_win = compute_frf(ft_ham_win, ft_acc_win)
+    frf_win = compute_frf(ft_excit_win, ft_acc_win)
     imp_win = np.real(np.fft.ifft(frf_win, n=n_fft))  # len(times)))
     times_imp = np.arange(n_fft) / sr
     # Spectrogrammes
     spec_win = sig.get_window(conf.spec.win.name, conf.spec.win.length)
-    freqs_spec, times_spec, spec_ham = sig.spectrogram(
-        data_ham,
+    freqs_spec, times_spec, spec_excit = sig.spectrogram(
+        data_excit,
         nfft=conf.spec.n_fft,
         fs=sr,
         window=spec_win,
@@ -140,11 +173,12 @@ def perform_analysis(
     )
 
     data = {
+        "excitation_kind": excitation_kind,
         "times": {
             "whole": times,
-            "ham": {
-                "win": times_ham_win,
-                "extents": np.array([idx_ham_win_start, idx_ham_win_stop]),
+            "excit": {
+                "win": times_excit_win,
+                "extents": np.array([idx_excit_win_start, idx_excit_win_stop]),
             },
             "acc": {
                 "win": times_acc_win,
@@ -162,18 +196,18 @@ def perform_analysis(
         "n_fft": n_fft,
     }
     data["temporal"] = {
-        "ham": {"whole": data_ham, "win": data_ham_win},
+        "excit": {"whole": data_excit, "win": data_excit_win},
         "acc": {"whole": data_acc, "win": data_acc_win},
         "mic": {"whole": data_mic, "win": data_mic_win},
         "imp": {"whole": imp, "win": imp_win},
     }
     data["frequential"] = {
-        "ham": {"whole": ft_ham, "win": ft_ham_win},
+        "excit": {"whole": ft_excit, "win": ft_excit_win},
         "acc": {"whole": ft_acc, "win": ft_acc_win},
         "mic": {"whole": ft_mic, "win": ft_mic_win},
         "frf": {"whole": frf, "win": frf_win},
     }
-    data["spec"] = {"ham": spec_ham, "acc": spec_acc, "mic": spec_mic}
+    data["spec"] = {"excit": spec_excit, "acc": spec_acc, "mic": spec_mic}
     return data
 
 
@@ -191,13 +225,15 @@ def compute_analysis_figures(
     Returns:
         Tuple[pltfig.Figure]: [description]
     """
+    excitation_kind = data["excitation_kind"]
+    #
     times = data["times"]["whole"]
-    times_ham_win = data["times"]["ham"]["win"]
+    times_excit_win = data["times"]["excit"]["win"]
     times_acc_win = data["times"]["acc"]["win"]
     times_mic_win = data["times"]["mic"]["win"]
     times_imp = data["times"]["imp"]
     #
-    extents_ham_win = data["times"]["ham"]["extents"]
+    extents_excit_win = data["times"]["excit"]["extents"]
     extents_acc_win = data["times"]["acc"]["extents"]
     extents_mic_win = data["times"]["mic"]["extents"]
     #
@@ -208,8 +244,8 @@ def compute_analysis_figures(
     #
     sr = data["sr"]
     #
-    sig_ham = data["temporal"]["ham"]["whole"]
-    sig_ham_win = data["temporal"]["ham"]["win"]
+    sig_excit = data["temporal"]["excit"]["whole"]
+    sig_excit_win = data["temporal"]["excit"]["win"]
     sig_acc = data["temporal"]["acc"]["whole"]
     sig_acc_win = data["temporal"]["acc"]["win"]
     sig_mic = data["temporal"]["mic"]["whole"]
@@ -217,8 +253,8 @@ def compute_analysis_figures(
     imp = data["temporal"]["imp"]["whole"]
     imp_win = data["temporal"]["imp"]["win"]
     #
-    ft_ham = data["frequential"]["ham"]["whole"]
-    ft_ham_win = data["frequential"]["ham"]["win"]
+    ft_excit = data["frequential"]["excit"]["whole"]
+    ft_excit_win = data["frequential"]["excit"]["win"]
     ft_acc = data["frequential"]["acc"]["whole"]
     ft_acc_win = data["frequential"]["acc"]["win"]
     ft_mic = data["frequential"]["mic"]["whole"]
@@ -226,7 +262,7 @@ def compute_analysis_figures(
     frf = data["frequential"]["frf"]["whole"]
     frf_win = data["frequential"]["frf"]["win"]
     #
-    spec_ham = data["spec"]["ham"]
+    spec_excit = data["spec"]["excit"]
     spec_acc = data["spec"]["acc"]
     spec_mic = data["spec"]["mic"]
     #
@@ -234,27 +270,47 @@ def compute_analysis_figures(
     if conf.focus.freq is not None:
         freq_focus = conf.focus.freq
     time_focus = (times[0], times[-1])
-    time_focus_ham = (times[0], times[-1])
+    time_focus_excit = (times[0], times[-1])
     time_focus_acc = (times[0], times[-1])
     time_focus_mic = (times[0], times[-1])
     if conf.focus.time is not None:
-        if conf.focus.time == "win":
+        if conf.focus.time.center == "win":
             time_focus_ham = extents_ham_win / sr
             time_focus_acc = extents_acc_win / sr
             time_focus_mic = extents_mic_win / sr
+            """
+            centre_excit_win = np.mean(extents_excit_win)
+            dist_excit_win = np.amax(extents_excit_win) - centre_excit_win
+            centre_acc_win = np.mean(extents_acc_win)
+            dist_acc_win = np.amax(extents_acc_win) - centre_acc_win
+            centre_mic_win = np.mean(extents_mic_win)
+            dist_mic_win = np.amax(extents_mic_win) - centre_mic_win
+            time_focus_excit = (
+                centre_excit_win
+                + np.array([-1, 1]) * dist_excit_win * conf.focus.time.ratio
+            ) / sr
+            time_focus_acc = (
+                centre_acc_win
+                + np.array([-1, 1]) * dist_acc_win * conf.focus.time.ratio
+            ) / sr
+            time_focus_mic = (
+                centre_mic_win
+                + np.array([-1, 1]) * dist_mic_win * conf.focus.time.ratio
+            ) / sr
+            """
     #  TEMPORAL RESPONSES
-    # Hammer
+    # Excitation
     fig_time = fig_fac(figsize=(16, 12))
     fig_time.subplots_adjust(hspace=0.2, wspace=0.4)
     fig_time.suptitle("Temporal responses")
     #
     ax = fig_time.add_subplot(2, 2, 1)
-    ax.set_title("Hammer")
-    ax.plot(times, sig_ham)
-    ax.plot(times_ham_win, sig_ham_win, c="r")
+    ax.set_title(f"Excitation ({excitation_kind})")
+    ax.plot(times, sig_excit)
+    ax.plot(times_excit_win, sig_excit_win, c="r")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Force (N)")
-    ax.set_xlim(time_focus_ham)
+    ax.set_xlim(time_focus_excit)
     # Accelerometer
     ax = fig_time.add_subplot(2, 2, 2)
     ax.set_title("Accelerometer")
@@ -285,10 +341,10 @@ def compute_analysis_figures(
     fig_freq.suptitle("Frequential responses (modules)")
     #
     ax = fig_freq.add_subplot(3, 1, 1)
-    ax.set_title("Hammer")
-    ax.plot(np.fft.fftshift(freqs), np.fft.fftshift(to_db(np.abs(ft_ham))))
+    ax.set_title(f"Excitation ({excitation_kind})")
+    ax.plot(np.fft.fftshift(freqs), np.fft.fftshift(to_db(np.abs(ft_excit))))
     ax.plot(
-        np.fft.fftshift(freqs_win), np.fft.fftshift(to_db(np.abs(ft_ham_win))), c="r"
+        np.fft.fftshift(freqs_win), np.fft.fftshift(to_db(np.abs(ft_excit_win))), c="r"
     )
     ax.set_xlabel("Frequency (Hz)")
     ax.set_ylabel("Force (dB[N])")
@@ -345,12 +401,14 @@ def compute_analysis_figures(
     surfs = []
     fig_spec.subplots_adjust(hspace=0.2, wspace=0.4)
     fig_spec.suptitle("Spectrogrammes")
-    # Hammer
+    # Excitation
     ax = fig_spec.add_subplot(3, 1, 1)
-    ax.set_title("Hammer")
+    ax.set_title(f"Excitation ({excitation_kind})")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Frequency (Hz)")
-    surf = ax.imshow(to_db(spec_ham), extent=spec_extent, origin="lower", aspect="auto")
+    surf = ax.imshow(
+        to_db(spec_excit), extent=spec_extent, origin="lower", aspect="auto"
+    )
     axes.append(ax)
     surfs.append(surf)
     # Accelerometer
