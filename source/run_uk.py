@@ -33,8 +33,8 @@ if __name__ == "__main__":
                         help='Logging config file path')
     parser.add_argument('--out_dir', default=None, type=str,
                         help='Output directory for output data')
-    parser.add_argument('--finger_pos', default=0, type=float,
-                        help='Finger position on soundboard')
+    # parser.add_argument('--finger_pos', default=0, type=float,
+    #                    help='Finger position on soundboard')
     args = parser.parse_args()
 
     # Loading config from config files
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # There is no external force applied to the body.
     ext_force_body = ForceNull()
     # List of finger constraints, there is none on the body
-    finger_constraints = [args.finger_pos, 0]
+    # finger_constraints = [args.finger_pos, 0]
 
     # The string and body are initially at rest.
     q_n_is = [np.zeros(sim.n[i].shape, dtype=float) for i in range(2)]
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     # Run the simulation / solve the system.
     t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = sim.run(
         [string, body], [ext_force_string, ext_force_body],
-        q_n_is, dq_n_is, finger_constraints)
+        q_n_is, dq_n_is)
 
     y_ns = [struct.y_n(q_ns[i], sim.n[i])
             for (i, struct) in enumerate([string, body])]

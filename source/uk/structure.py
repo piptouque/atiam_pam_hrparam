@@ -378,7 +378,7 @@ class ModalSimulation:
     """A constraint solver and simulation for the U-K formulation of modal analysis.
     """
 
-    def __init__(self, nb_modes: (int or list), nb_steps: int, h: float, num_struct=None, coupling="rigid") -> None:
+    def __init__(self, nb_modes: (int or list), nb_steps: int, h: float, num_struct=None, coupling="rigid", finger=0) -> None:
         if isinstance(nb_modes, int):
             if num_struct is None:
                 raise TypeError("number of structures num_struct should be defined if nb_modes is int")
@@ -388,12 +388,14 @@ class ModalSimulation:
         self.nb_steps = nb_steps
         self.h = h
         self.coupling = coupling
+        self.finger = finger
 
         self._param_dict = {
             'n': self.n,
             'nb_steps': self.nb_steps,
             'h': h,
-            'coupling': self.coupling
+            'coupling': self.coupling,
+            'finger': self.finger
         }
 
     # @staticmethod
@@ -421,7 +423,7 @@ class ModalSimulation:
         w_mat = np.eye(sum([len(self.n[s]) for s in range(len(self.n))])) - m_halfinv_mat @ b_plus_mat @ a_mat
         return w_mat
 
-    def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat], finger_constraints: List[float]) -> Tuple[List[npt.NDArray[AFloat]]]:
+    def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat]) -> Tuple[List[npt.NDArray[AFloat]]]:
         """Solve the constrained system.
         Based on the velocity-Verlet algorithm described in:
 
@@ -440,8 +442,14 @@ class ModalSimulation:
             Tuple[List[npt.NDArray[AFloat]]]: Tuple of computed times, modal responses, associated derivative and modal external forces for each modal structure.
         """
         assert len(structs) == len(ext_forces) and len(
-            structs) == len(q_n_is) and len(structs) == len(dq_n_is) \
-            and len(finger_constraints) == len(structs)
+            structs) == len(q_n_is) and len(structs) == len(dq_n_is)
+
+        finger_constraints = []
+        for struct in structs:
+            if isinstance(struct, GuitarString):
+                finger_constraints.append(self.finger)
+            elif isinstance(struct, GuitarBody):
+                finger_constraints.append(0)
 
         def _make_vec():
             if np.ndim(self.n) != 0:

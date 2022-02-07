@@ -2,5 +2,6 @@
     "nb_modes": [10,5],
     "nb_steps": 10000,
     "h": 0.0001,
-    "coupling": "flexible"
+    "coupling": "flexible",
+    "finger": 0.3
 }
