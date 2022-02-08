@@ -275,7 +275,7 @@ def compute_analysis_figures(
     time_focus_mic = (times[0], times[-1])
     if conf.focus.time is not None:
         if conf.focus.time.center == "win":
-            time_focus_ham = extents_ham_win / sr
+            time_focus_excit = extents_excit_win / sr
             time_focus_acc = extents_acc_win / sr
             time_focus_mic = extents_mic_win / sr
             """
