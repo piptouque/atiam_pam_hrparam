@@ -24,7 +24,7 @@ def esprit_correlation_mat(x: npt.NDArray[complex], n: int) -> npt.NDArray[compl
         npt.NDArray[complex]: [description]
     """
     x_h = scipy.linalg.hankel(x[:n], r=x[n - 1 :])
-    l = x.shape[0] - n + 1
+    l = x.shape[-1] - n + 1
     return x_h @ x_h.transpose().conj() / l
 
 
@@ -203,7 +203,7 @@ def psd_noise(x_psd: npt.NDArray[complex], nu_width: float) -> npt.NDArray[compl
 
 
 def noise_filtre_coeffs(
-    x: npt.NDArray[complex], n_fft: int, nu_width: float, ar_order: int
+    x: npt.NDArray[complex], n_fft: int, nu_width: float, ar_ordre: int
 ) -> npt.NDArray[complex]:
     """Estimate the coefficients of the filtre generating the coloured noise from a white one.
 
@@ -211,14 +211,14 @@ def noise_filtre_coeffs(
         x (npt.NDArray[complex]): Input temporal signal
         n_fft (int): Number of frequential bins
         nu_width (float): Width of the median filtre used in noise PSD estimation
-        ar_order (int): Order of the estimated AR filtre
+        ar_ordre (int): Ordre of the estimated AR filtre
 
     Returns:
         npt.NDArray[complex]: Coefficients of the AR filtre.
     """
     # x: the input signal FOR EACH FREQUENCY BAND
-    # smoothing_order: at least two times the length of the PSD's principal lobe (can be done visually)
-    # AR_order: ~ 10
+    # smoothing_ordre: at least two times the length of the PSD's principal lobe (can be done visually)
+    # AR_ordre: ~ 10
     # note: no need to give it the correct sample frequency,
     # since it is only used to return the fftfreqs.
     _, x_psd = sig.welch(x, fs=1, nfft=n_fft)
@@ -231,9 +231,9 @@ def noise_filtre_coeffs(
     ac_coeffs = np.real(np.fft.ifft(noise_psd, n=n_fft))
     # coefficients matrix of the Yule-Walker system
     # = autocovariance matrix with the last row and last column removed
-    r_mat = scipy.linalg.toeplitz(ac_coeffs[: ar_order - 1], ac_coeffs[: ar_order - 1])
+    r_mat = scipy.linalg.toeplitz(ac_coeffs[: ar_ordre - 1], ac_coeffs[: ar_ordre - 1])
     # the constant column of the Yule-Walker system
-    r = ac_coeffs[1:ar_order].T
+    r = ac_coeffs[1:ar_ordre].T
     # the AR coefficients (indices 1, ..., N-1)
     b = -scipy.linalg.pinv(r_mat) @ r
     # the AR coefficients (indices 0, ..., N-1)
@@ -243,7 +243,7 @@ def noise_filtre_coeffs(
 
 
 def whiten(
-    x: npt.NDArray[complex], n_fft: int, nu_width: float, ar_order: int
+    x: npt.NDArray[complex], n_fft: int, nu_width: float, ar_ordre: int
 ) -> npt.NDArray[complex]:
     """Whiten the noise in input temporal signal
 
@@ -251,12 +251,12 @@ def whiten(
         x (npt.NDArray[complex]): Input temporal signal
         n_fft (int): Number of frequential bins
         nu_width (float): Width of the median filtre used in noise PSD estimation
-        ar_order (int): Order of the estimated AR filtre
+        ar_ordre (int): Ordre of the estimated AR filtre
 
     Returns:
         npt.NDArray[complex]: Temporal signal with noise whitened.
     """
-    b = noise_filtre_coeffs(x, n_fft=n_fft, nu_width=nu_width, ar_order=ar_order)
+    b = noise_filtre_coeffs(x, n_fft=n_fft, nu_width=nu_width, ar_ordre=ar_ordre)
     # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
     # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
     # are the coefficients of the AR's denominator, i.e. the array b
@@ -273,12 +273,12 @@ def ester_error(
     Still don't know if p_max whether chosen or estimated,
     and how.
     Don't discard the bogus p=0 case,
-    because then the best order is the argmax!
+    because then the best ordre is the argmax!
 
     Args:
         x (npt.NDArray[complex]): [description]
         n (int): [description]
-        p_max (int): Maximum order to consider, in [|1, n-2|]
+        p_max (int): Maximum ordre to consider, in [|1, n-2|]
 
     Returns:
         List[npt.NDArray[complex]]: Estimation error of p for p in [1, p_max]
@@ -288,7 +288,7 @@ def ester_error(
     # K: ?
     assert (
         1 <= p_max < n - 1
-    ), f"Maximum order p_max={p_max} should be less than n-1={n-1}."
+    ), f"Maximum ordre p_max={p_max} should be less than n-1={n-1}."
 
     w, _ = esprit_ws(x, n, p_max)
     w_cap = [w[:, :p] for p in range(p_max + 1)]
@@ -358,7 +358,7 @@ def ester_inverse_error_func(
 
 
 def ester(x: npt.NDArray[complex], n: int, p_max: int) -> npt.NDArray[float]:
-    """Gets the estimated ESM model order r using the ESTER algorithm.
+    """Gets the estimated ESM model ordre r using the ESTER algorithm.
     see: http://ieeexplore.ieee.org/document/1576975/
 
     Args:
