@@ -489,7 +489,7 @@ class ModalSimulation:
                 # solve constraints
                 #
                 ddq_ns[i][..., k] = w_mat_list[i] @ ddq_u_ns[i][..., k]
-                #ddq_ns[i][..., k] = (w_mat @ np.vstack(ddq_u_ns)[..., k])[idx[i]:idx[i+1]]
+                #ddq_ns[i][..., k] = (w_mat @ np.ostack(ddq_u_ns)[..., k])[idx[i]:idx[i+1]]
                 #
                 dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
                     self.h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])

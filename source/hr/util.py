@@ -186,11 +186,44 @@ def make_synth(
     return x_synth, snr
 
 
+def psd_noise_sig(
+    x: npt.NDArray[complex], n_fft: int, smoothing_factor: float = 1, fs: float = 1
+) -> npt.NDArray[complex]:
+    """Estimates the noise's PSD from a temporal signal.
+
+    Args:
+        x (npt.NDArray[complex]): [description]
+        n_fft (int): Number of frequency bins
+        smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+        fs (float): Sampling rate
+
+    Returns:
+        npt.NDArray[complex]: [description]
+    """
+    # x: the input signal FOR EACH FREQUENCY BAND
+    # smoothing_ordre: at least two times the length of the PSD's principal lobe (can be done visually)
+    # AR_ordre: ~ 10
+    # note: no need to give it the correct sample frequency,
+    # since it is only used to return the fftfreqs.
+    win_name = "hann"
+    m = n_fft // 2
+    win_width_norm = 2  # for a Hann window
+    win_width = win_width_norm / m
+    # At least twice the bandwidth of the window used in the PSD computation!
+    nu_width = smoothing_factor * 2 * win_width
+    print(f"width={nu_width * fs} Hz, {nu_width * n_fft} samples")
+    _, x_psd = sig.welch(x, fs=fs, nfft=n_fft, window=win_name, nperseg=m)
+
+    # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
+    noise_psd = psd_noise(x_psd, nu_width)
+    return noise_psd
+
+
 def psd_noise(x_psd: npt.NDArray[complex], nu_width: float) -> npt.NDArray[complex]:
     """Estimates the noise's PSD with a median filter (smoothing the signal's PSD)
     Args:
         x_psd (npt.NDArray[complex]): [description]
-        nu_width (float): Width of the median filter in normalised frequency (in [0, 0.5])
+        smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
 
     Returns:
         npt.NDArray[complex]: Estimated PSD of the noise.
@@ -203,28 +236,26 @@ def psd_noise(x_psd: npt.NDArray[complex], nu_width: float) -> npt.NDArray[compl
 
 
 def noise_filtre_coeffs(
-    x: npt.NDArray[complex], n_fft: int, nu_width: float, ar_ordre: int
+    x: npt.NDArray[complex],
+    n_fft: int,
+    ar_ordre: int,
+    smoothing_factor: float = 1,
+    fs: float = 1,
 ) -> npt.NDArray[complex]:
     """Estimate the coefficients of the filtre generating the coloured noise from a white one.
 
     Args:
-        x (npt.NDArray[complex]): Input temporal signal
+        x (npt.NDArray[complex]): Input temporal signal, for each frequency band
         n_fft (int): Number of frequential bins
-        nu_width (float): Width of the median filtre used in noise PSD estimation
-        ar_ordre (int): Ordre of the estimated AR filtre
+        ar_ordre (int): Ordre of the estimated AR filtre. ~ 10?
+        smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
+        fs (float): Sampling rate
 
     Returns:
         npt.NDArray[complex]: Coefficients of the AR filtre.
     """
-    # x: the input signal FOR EACH FREQUENCY BAND
-    # smoothing_ordre: at least two times the length of the PSD's principal lobe (can be done visually)
-    # AR_ordre: ~ 10
-    # note: no need to give it the correct sample frequency,
-    # since it is only used to return the fftfreqs.
-    _, x_psd = sig.welch(x, fs=1, nfft=n_fft)
-
-    # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
-    noise_psd = psd_noise(x_psd, nu_width)
+    noise_psd = psd_noise_sig(x, n_fft=n_fft, smoothing_factor=smoothing_factor, fs=fs)
 
     # Step 3: calculating the autocovariance of the noise
     # autocovariance (vector) of the noise
@@ -243,20 +274,27 @@ def noise_filtre_coeffs(
 
 
 def whiten(
-    x: npt.NDArray[complex], n_fft: int, nu_width: float, ar_ordre: int
+    x: npt.NDArray[complex],
+    n_fft: int,
+    ar_ordre: int,
+    smoothing_factor: float = 1,
+    fs: float = 1,
 ) -> npt.NDArray[complex]:
     """Whiten the noise in input temporal signal
 
     Args:
         x (npt.NDArray[complex]): Input temporal signal
         n_fft (int): Number of frequential bins
-        nu_width (float): Width of the median filtre used in noise PSD estimation
         ar_ordre (int): Ordre of the estimated AR filtre
+        smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+        fs (float): Sampling rate
 
     Returns:
         npt.NDArray[complex]: Temporal signal with noise whitened.
     """
-    b = noise_filtre_coeffs(x, n_fft=n_fft, nu_width=nu_width, ar_ordre=ar_ordre)
+    b = noise_filtre_coeffs(
+        x, n_fft=n_fft, ar_ordre=ar_ordre, smoothing_factor=smoothing_factor, fs=fs
+    )
     # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
     # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
     # are the coefficients of the AR's denominator, i.e. the array b
@@ -309,19 +347,12 @@ def ester_error(
         w_cap_up_pm = w_cap[p - 1][1:]
         w_down_p = w_cap[p][:-1, p - 1]
         w_up_p = w_cap[p][1:, p - 1]
-        # print(w_down_p.shape, w_up_p.shape)
         # 1. Update of the auxiliary matrix psi_mat[p]
         psi_r[p] = w_cap_down_pm.T.conj() @ w_up_p
         psi_l[p] = w_cap_up_pm.T.conj() @ w_down_p
         psi_lr[p] = w_down_p.T.conj() @ w_up_p
-        # print(w_cap_up_pm.shape, w_down_p.shape)
         # 2. Update of the auxiliary matrix ksi_mat[p]
-        # print(w_up_p.shape)
-        # print(w_cap_down_pm.shape, psi_r[p].shape)
-        # print(w_down_p.shape, psi_lr[p].shape)
         ksi_p = w_up_p - w_cap_down_pm @ psi_r[p] - w_down_p * psi_lr[p]
-        # print(ksi_cap[p - 1].shape)
-        # print(ksi_cap[p][:, :-1].shape)
         psi_l_p = psi_l[p]
         ksi_cap[p][:, :-1] = ksi_cap[p - 1] - np.outer(w_down_p, psi_l_p.conj())
         ksi_cap[p][:, -1] = ksi_p
@@ -330,7 +361,6 @@ def ester_error(
         phi[p][:-1] = phi[p - 1] + mu_p * psi_l[p]
         phi[p][-1] = psi_r[p].T.conj() @ nu[p - 1] + mu_p * psi_lr[p].conj()
         w_cap_down_p = w_cap[p][:-1]
-        a = w_cap_down_p @ nu[p]
         e[p] = ksi_cap[p] - 1 / (1 - np.linalg.norm(nu[p], ord=2) ** 2) * np.outer(
             (w_cap_down_p @ nu[p]), phi[p].T.conj()
         )
@@ -357,19 +387,36 @@ def ester_inverse_error_func(
     return j
 
 
-def ester(x: npt.NDArray[complex], n: int, p_max: int) -> npt.NDArray[float]:
+def ester(
+    x: npt.NDArray[complex], n: int, p_max: int, thresh_ratio: float = 0.1
+) -> npt.NDArray[float]:
     """Gets the estimated ESM model ordre r using the ESTER algorithm.
     see: http://ieeexplore.ieee.org/document/1576975/
+
+    'In presence of noise, [...] a robust way of selecting
+    the modeling order consists in detecting the greatest value
+    of p for which the function J reaches a local maximum which
+    is greater than a fraction of its global maximum
+    (typically one tenth of the global maximum)'
 
     Args:
         x (npt.NDArray[complex]): [description]
         n (int): [description]
         p_max (int): [description]
+        thresh_ratio (float): fraction of the global maximum of J used as a threshold
 
     Returns:
         npt.NDArray[float]: [description]
     """
     j = ester_inverse_error_func(x, n, p_max)
+    j_max = np.max(j)
+    j_max_thres_ids, _ = sig.find_peaks(j, height=j_max * thresh_ratio)
+    j_max_ids = sig.argrelextrema(j, np.greater_equal, order=1, mode="clip")[0]
+    j_max_thres_ids = j_max_ids[np.nonzero(j[j_max_ids] >= j_max * thresh_ratio)[0]]
+    print(j)
+    print(j_max_ids)
+    # print(j_max_thres_ids)
     # first index actually corresponds to p=1
-    r = np.argmax(j) + 1
+    r = np.max(j_max_thres_ids) + 1
+    # r = np.argmax(j) + 1
     return r
