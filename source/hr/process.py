@@ -1,26 +1,44 @@
-import scipy.linalg
+import scipy.linalg as alg
 import scipy.signal as sig
+import scipy.ndimage as img
 import numpy as np
 import numpy.typing as npt
 
 from typing import Tuple, List
 
-from hr.util import EsmModel
+from hr.esm import EsmModel
 
 
-class SubspaceDecomposition:
+class EsmSubspaceDecomposer:
     """[summary]"""
 
-    def __init__(self, x: npt.NDArray[complex], sr: float) -> None:
-        self.x = x
-        self.sr = sr
+    def __init__(
+        self,
+        fs: float,
+        n_esprit: int,
+        p_max_ester: int,
+        n_fft_noise: int,
+        smoothing_factor_noise: float,
+        ar_ordre_noise: int = 10,
+        thresh_ratio_ester: float = 0.1,
+    ) -> None:
 
-        self.x_white = None
-        self.w = None
-        self.w_per = None
-        self.esm = None
+        self.fs = fs
+        self.n_fft_noise = n_fft_noise
+        #
+        self.n_esprit = n_esprit
+        #
+        self.smoothing_factor_noise = smoothing_factor_noise
+        self.ar_ordre_noise = ar_ordre_noise
+        #
+        self.p_max_ester = p_max_ester
+        self.thresh_ratio_ester = thresh_ratio_ester
 
-    def setup(self, n: int, p_max: int, n_fft: int) -> None:
+    def perform(
+        self, x: npt.NDArray[complex]
+    ) -> Tuple[
+        EsmModel, npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]
+    ]:
         """[summary]
 
         Args:
@@ -29,22 +47,24 @@ class SubspaceDecomposition:
             n_fft (int): [description]
         """
 
-        # 1. Whiten the noise because ESTER does not
-        # seem to work quite as well with coloured noise
-        ar_ordre = 10
-        self.x_white = NoiseWhitening.whiten(
-            self.x, n_fft, fs=self.sr, ar_ordre=ar_ordre
+        # 1. Estimate the ESM model ordre on the original noisy signal
+        # because ESTER does work quite as well with the whitened signal
+        r = Ester.estimate_esm_ordre(
+            x,
+            self.n_esprit,
+            self.p_max_ester,
+            thresh_ratio=self.thresh_ratio_ester,
         )
 
-        # 2. Estimate the ESM model ordre on the whitened signal
-        thresh_ratio = 0.1
-        r = Ester.estimate_esm_ordre(self.x_white, n, p_max, thresh_ratio=thresh_ratio)
+        # 2. Whiten the noise
+        x_white = NoiseWhitening.whiten(
+            x, self.n_fft_noise, fs=self.fs, ar_ordre=self.ar_ordre_noise
+        )
 
-        # 3. Apply ESPRIT on the whitened signal in ordre to estimate
-        esm, w, w_per = Esprit.estimate_esm(self.x_white, n, r)
-        self.esm = esm
-        self.w = w
-        self.w_per = w_per
+        # 3. Apply ESPRIT on the whitened signal
+        # and estimate the ESM model parameters
+        x_esm, w, w_per = Esprit.estimate_esm(x_white, self.n_esprit, r)
+        return x_esm, w, w_per, x_white
 
 
 class Esprit:
@@ -61,7 +81,7 @@ class Esprit:
         Returns:
             npt.NDArray[complex]: [description]
         """
-        x_h = scipy.linalg.hankel(x[:n], r=x[n - 1 :])
+        x_h = alg.hankel(x[:n], r=x[n - 1 :])
         l = x.shape[-1] - n + 1
         return x_h @ x_h.transpose().conj() / l
 
@@ -80,14 +100,13 @@ class Esprit:
             Tuple[npt.NDArray[complex], npt.NDArray[float]]: (n,k) and (n,n-k) W and W_per matrices
         """
         r_xx = cls._correlation_mat(x, n)
-        u_1, _, _ = scipy.linalg.svd(r_xx)
-        # sigma = scipy.linalg.diagsvd(s, r_xx.shape[0], r_xx.shape[1])
+        u_1, _, _ = alg.svd(r_xx)
         w = u_1[:, :k]
         w_per = u_1[:, k:]
         return w, w_per
 
     @classmethod
-    def _estimate_dampfreq(
+    def estimate_dampfreq(
         cls,
         w: npt.NDArray[complex],
     ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
@@ -104,21 +123,24 @@ class Esprit:
         """
         w_down = w[:-1]
         w_up = w[1:]
-        phi = scipy.linalg.pinv(w_down) @ w_up
-        zs = scipy.linalg.eig(phi, left=False, right=False)
-        deltas = -np.log(np.abs(zs))  # damping factors
-        nus = np.angle(zs) / (2 * np.pi)  # frequencies
-        return deltas, nus
+        phi = alg.pinv(w_down) @ w_up
+        zs = alg.eig(phi, left=False, right=False)
+        log_zs = np.log(zs)
+        # no damping should ever be negative.
+        # fix: just discard those that are.
+        gammas = -np.minimum(0, np.real(log_zs))  # damping factors
+        nus = np.imag(log_zs) / (2 * np.pi)  # frequencies
+        return gammas, nus
 
     @classmethod
-    def _estimate_amp(
-        cls, x: npt.NDArray[float], deltas: npt.NDArray[float], nus: npt.NDArray[float]
+    def estimate_amp(
+        cls, x: npt.NDArray[float], gammas: npt.NDArray[float], nus: npt.NDArray[float]
     ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
         """Estimate the amplitude in the ESM model using least-squares.
 
         Args:
             x (npt.NDArray[float]): Input signal
-            deltas (npt.NDArray[float]): Array of estimated normalised damping factors
+            gammas (npt.NDArray[float]): Array of estimated normalised damping factors
             nus (npt.NDArray[float]): Array of estimated normalised frequencies
 
         Returns:
@@ -126,9 +148,9 @@ class Esprit:
         """
         n_s = len(x)  # signal's length
         ts = np.arange(n_s)  # array of discrete times
-        z_logs = -deltas + 2j * np.pi * nus  # log of the pole
+        z_logs = -gammas + 2j * np.pi * nus  # log of the pole
         v = np.exp(np.outer(ts, z_logs))  # Vandermonde matrix of dimension N
-        alphas = scipy.linalg.pinv(v) @ x
+        alphas = alg.pinv(v) @ x
         amps = np.abs(alphas)
         phis = np.angle(alphas)
         return amps, phis
@@ -148,10 +170,10 @@ class Esprit:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
         w, w_per = cls.spectral_mats(x, n, k)
-        deltas, nus = cls._estimate_dampfreq(w)
-        amps, phis = cls._estimate_amp(x, deltas, nus)
+        gammas, nus = cls.estimate_dampfreq(w)
+        amps, phis = cls.estimate_amp(x, gammas, nus)
 
-        esm = EsmModel(deltas=deltas, nus=nus, amps=amps, phis=phis)
+        esm = EsmModel(gammas=gammas, nus=nus, amps=amps, phis=phis)
 
         return (esm, w, w_per)
 
@@ -174,7 +196,7 @@ class NoiseWhitening:
         n_fft = x_psd.shape[-1]
         size = int(np.round(nu_width * n_fft))
 
-        noise_psd = scipy.ndimage.median_filter(x_psd, size=size)
+        noise_psd = img.median_filter(x_psd, size=size)
         return noise_psd
 
     @classmethod
@@ -208,7 +230,9 @@ class NoiseWhitening:
         # At least twice the bandwidth of the window used in the PSD computation!
         nu_width = smoothing_factor * 2 * win_width
         # print(f"width={nu_width * fs} Hz, {nu_width * n_fft} samples")
-        _, x_psd = sig.welch(x, fs=fs, nfft=n_fft, window=win_name, nperseg=m)
+        _, x_psd = sig.welch(
+            x, fs=fs, nfft=n_fft, window=win_name, nperseg=m, return_onesided=False
+        )
 
         # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
         noise_psd = cls._estimate_noise_psd(x_psd, nu_width)
@@ -244,13 +268,11 @@ class NoiseWhitening:
         ac_coeffs = np.real(np.fft.ifft(noise_psd, n=n_fft))
         # coefficients matrix of the Yule-Walker system
         # = autocovariance matrix with the last row and last column removed
-        r_mat = scipy.linalg.toeplitz(
-            ac_coeffs[: ar_ordre - 1], ac_coeffs[: ar_ordre - 1]
-        )
+        r_mat = alg.toeplitz(ac_coeffs[: ar_ordre - 1], ac_coeffs[: ar_ordre - 1])
         # the constant column of the Yule-Walker system
         r = ac_coeffs[1:ar_ordre].T
         # the AR coefficients (indices 1, ..., N-1)
-        b = -scipy.linalg.pinv(r_mat) @ r
+        b = -alg.pinv(r_mat) @ r
         # the AR coefficients (indices 0, ..., N-1)
         b = np.insert(b, 0, 1)
         return b
@@ -309,9 +331,6 @@ class Ester:
         Returns:
             List[npt.NDArray[complex]]: Estimation error of p for p in [1, p_max]
         """
-        # x: input signal
-        # n: n: number of lines in the Hankel matrix S
-        # K: ?
         assert (
             1 <= p_max < n - 1
         ), f"Maximum ordre p_max={p_max} should be less than n-1={n-1}."
@@ -350,7 +369,7 @@ class Ester:
             phi[p][:-1] = phi[p - 1] + mu_p * psi_l[p]
             phi[p][-1] = psi_r[p].T.conj() @ nu[p - 1] + mu_p * psi_lr[p].conj()
             w_cap_down_p = w_cap[p][:-1]
-            e[p] = ksi_cap[p] - 1 / (1 - np.linalg.norm(nu[p], ord=2) ** 2) * np.outer(
+            e[p] = ksi_cap[p] - 1 / (1 - alg.norm(nu[p], ord=None) ** 2) * np.outer(
                 (w_cap_down_p @ nu[p]), phi[p].T.conj()
             )
         # discard p=0 case (meaningless)
@@ -372,7 +391,7 @@ class Ester:
             npt.NDArray[float]: [description]
         """
         e = cls.error(x, n, p_max)
-        j = np.array([1 / np.linalg.norm(e[p], ord=2) ** 2 for p in range(len(e))])
+        j = np.array([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
         return j
 
     @classmethod
@@ -398,12 +417,12 @@ class Ester:
             npt.NDArray[float]: [description]
         """
         j = cls.inverse_error_func(x, n, p_max)
-        j_max = np.max(j)
+        j_max = np.amax(j)
         # first select peaks in signal
         j_max_thres_ids, _ = sig.find_peaks(j, height=j_max * thresh_ratio)
         # then filter peaks under threshold
         j_max_ids = sig.argrelextrema(j, np.greater_equal, order=1, mode="clip")[0]
         j_max_thres_ids = j_max_ids[np.nonzero(j[j_max_ids] >= j_max * thresh_ratio)[0]]
         # first index corresponds to p=1, second to p=2 etc.
-        r = np.max(j_max_thres_ids) + 1
+        r = np.amax(j_max_thres_ids) + 1
         return r
