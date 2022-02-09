@@ -1,0 +1,3 @@
+# clear output data in jupyter notebooks
+# see: https://zhauniarovich.com/post/2020/2020-10-clearing-jupyter-output-p3/
+*.ipynb filter=jupyternotebook
