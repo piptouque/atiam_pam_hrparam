@@ -25,7 +25,7 @@ def compute_frf(
 
 
 def to_db(data: npt.NDArray[float]) -> npt.NDArray[float]:
-    return 20 * np.log(data)
+    return 10 * np.log(data)
 
 
 def load_data_json(path: str, cls=SimpleNamespace, **kwargs) -> object:

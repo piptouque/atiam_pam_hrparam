@@ -3,13 +3,10 @@
     "do_log": false,
     "plot": {
         "focus": {
-            "time": {
-                "center": "win",
-                "ratio": 2
-            },
+            "time": "win",
             "freq": [
                 20,
-                10000
+                2000
             ]
         }
     }
