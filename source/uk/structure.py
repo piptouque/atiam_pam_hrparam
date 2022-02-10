@@ -3,6 +3,7 @@ import copy
 import numpy as np
 import numpy.typing as npt
 import scipy.integrate as integrate
+from tqdm import tqdm
 
 from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
@@ -255,13 +256,25 @@ class GuitarBody(ModalStructure):
         return self.data.ksi_n[self._find_n(n)]
 
     def m_n(self, n: AInt) -> AFloat:
+        # we have to multiply back by the modeshape
+        # values at the bridge to compensate normalization
+        # phi_n = self.phi_n(n)
+        # phi_n = np.array([phi(0) for phi in phi_n])
+        # return np.abs(phi_n) * self.data.m_n[self._find_n(n)]
         return self.data.m_n[self._find_n(n)]
 
     def phi_n(self, n: AInt) -> AFloat:
         # no info on the modeshapes for the body.
         # we enforce a constant value of the bridge modeshapes
-        # FIX version multidimensionnelle ne marche pas
-        return np.array([lambda x: self.data.phi_n[ids] for ids in n], dtype=type(Callable)) if np.ndim(n) != 0 else lambda x: self.data.phi_n[n]
+        if np.ndim(n) != 0:
+            def _phi(j: int):
+                return lambda x: self.data.phi_n[j]
+            phi_nb = np.empty(n.shape, dtype=type(Callable))
+            for j in range(len(n)):
+                phi_nb[j] = _phi(j)
+            return phi_nb
+        else:
+            return lambda x: self.data.phi_n[n]
 
     def bridge_coupling(self, n: AInt, case="rigid") -> AFloat:
         if case == "rigid":
@@ -309,7 +322,9 @@ class GuitarString(ModalStructure):
     def m_n(self, n: AInt) -> AFloat:
         phi_n = self.phi_n(n)
         x_1, x_2 = self.extends
+        m_n = self.data.rho*self.data.l/2
         if np.ndim(n) != 0:
+            return np.array([m_n]*len(n))
             integs = np.empty(n.shape, dtype=float)
             for i in range(len(n)):
                 integ, err = integrate.quad(
@@ -317,6 +332,7 @@ class GuitarString(ModalStructure):
                 integs[i] = integ
             return self.data.rho * integs
         else:
+            return m_n
             integ, err = integrate.quad(lambda x:  phi_n(x)**2, 0, self.data.l)
             return self.data.rho * integ
 
@@ -398,8 +414,29 @@ class ModalSimulation:
             'finger': self.finger
         }
 
+    def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, ext_force_n_t: AFloat, m_n: AFloat, k_n: AFloat, c_n: AFloat) -> AFloat:
+        """Solves the unconstrained system.
+        See equation (42) in:
+
+            ANTUNES, Jose et DEBUT, Vincent.
+            Dynamical computation of constrained flexible systems
+                using a modal Udwadia-Kalaba formulation: Application to musical instruments.
+            The Journal of the Acoustical Society of America, 2017, vol. 141, no 2, p. 764-778.
+
+        Args:
+            q_n (AFloat): The modal responses,
+            dq_n (AFloat): The derivate of the modal responses `q_n`s,
+            n (AInt): The mode as an integer or modes as an array of integers.
+            ext_force_n_t (AFloat): The modal external forces.
+
+        Returns:
+            AFloat: The double-derivate of the unconstrained modal responses.
+        """
+        ddq_u_n = (- c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
+        return ddq_u_n
+
     # @staticmethod
-    def solve_constraints(self, structs: List[ModalStructure], a_ns: List[List[npt.NDArray[float]]]) -> List[List[npt.NDArray[float]]]:
+    def solve_constraints(self, structs: List[ModalStructure], a_mat, m_halfinv_mat, b_plus_mat) -> List[List[npt.NDArray[float]]]:
         """
         For now, a_ns, b_ns are constants in time.
         a_ns[i] are the list of constraints applied on sub-structure i.
@@ -410,16 +447,9 @@ class ModalSimulation:
             b_ns (List[npt.NDArray[float]]): [description]
             n (AInt): [description]
         """
-        assert len(a_ns) == len(structs)
         #
-        a_mat = np.hstack(a_ns)
-        #b_vec = np.array(b_ns)
 
-        m_halfinv_mat = np.diag(list(chain.from_iterable(
-            [np.power(struct.m_n(self.n[s]), -0.5) for s, struct in enumerate(structs)])))
-        #
-        b_mat = a_mat @ m_halfinv_mat
-        b_plus_mat = np.linalg.pinv(b_mat)
+        # b_plus_mat = np.linalg.pinv(b_mat)
         w_mat = np.eye(sum([len(self.n[s]) for s in range(len(self.n))])) - m_halfinv_mat @ b_plus_mat @ a_mat
         return w_mat
 
@@ -464,41 +494,68 @@ class ModalSimulation:
         dq_half_ns = _make_vec()
         ext_force_n_ts = _make_vec()
         a_ns = []
+        m_halfinv_mat = np.diag(list(chain.from_iterable(
+            [np.power(struct.m_n(self.n[s]), -0.5) for s, struct in enumerate(structs)])))
+        #
         for i in range(len(structs)):
-            q_ns[i][..., 0] = q_n_is[i]
-            dq_ns[i][..., 0] = dq_n_is[i]
+            # q_ns[i][..., 0] = q_n_is[i]
+            # dq_ns[i][..., 0] = dq_n_is[i]
             a_bridge = structs[i].bridge_coupling(self.n[i], self.coupling)
             a_finger = structs[i].finger_coupling(self.n[i], finger_constraints[i])
             a_ns.append(np.vstack((a_bridge, a_finger)))
-            print(a_ns)
+            #print(a_ns)
         #
+        a_mat = np.hstack(a_ns)
+        b_mat = a_mat @ m_halfinv_mat
+        b_plus_mat = b_mat.T@(np.linalg.inv(b_mat@b_mat.T))
         t = np.arange(self.nb_steps) * self.h
-        w_mat = self.solve_constraints(structs, a_ns)
+        w_mat = self.solve_constraints(structs, a_mat, m_halfinv_mat, b_plus_mat)
         w_mat_list = []
         idx = np.cumsum([len(num_mode) for num_mode in self.n])
         idx = np.insert(idx, 0, 0)
         for i in range(len(structs)):
             w_mat_list.append(w_mat[idx[i]:idx[i+1], idx[i]:idx[i+1]])
-        for k in range(1, self.nb_steps):
-            for i in range(len(structs)):
-                struct = structs[i]
-                q_ns[i][..., k] = q_ns[i][..., k-1] + self.h * dq_ns[i][..., k-1] + \
-                    0.5 * self.h**2 * ddq_ns[i][..., k-1]
-                dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
-                    0.5 * self.h * ddq_ns[i][..., k-1]
-                ext_force_n = struct.ext_force_n(ext_forces[i], self.n[i])
-                if np.ndim(self.n) != 0:
-                    for j in range(len(self.n[i])):
-                        ext_force_n_ts[i][j, k] = ext_force_n[j](t[k])
-                else:
-                    ext_force_n_ts[i][..., k] = ext_force_n(t[k])
-                ddq_u_ns[i][..., k] = struct.solve_unconstrained(
-                    q_ns[i][..., k], dq_half_ns[i][..., k], self.n[i], ext_force_n_ts[i][..., k])
-                # solve constraints
-                #
-                ddq_ns[i][..., k] = w_mat_list[i] @ ddq_u_ns[i][..., k]
-                #ddq_ns[i][..., k] = (w_mat @ np.vstack(ddq_u_ns)[..., k])[idx[i]:idx[i+1]]
-                #
-                dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
-                    self.h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])
+        q_ns = np.vstack(q_ns)
+        dq_ns = np.vstack(dq_ns)
+        ddq_u_ns = np.vstack(ddq_u_ns)
+        ddq_ns = np.vstack(ddq_ns)
+        dq_half_ns = np.vstack(dq_half_ns)
+        ext_force_n_ts = np.vstack(ext_force_n_ts)
+        #
+        ext_force_body = np.array([lambda x: 0]*len(self.n[1]), dtype=type(Callable))
+        #
+        c_n, k_n, m_n = [], [], []
+        for (i, struct) in enumerate(structs):
+            c_n.append(struct.c_n(self.n[i]))
+            k_n.append(struct.k_n(self.n[i]))
+            m_n.append(struct.m_n(self.n[i]))
+        c_n = np.hstack(c_n)
+        m_n = np.hstack(m_n)
+        k_n = np.hstack(k_n)
+        for k in tqdm(range(1, self.nb_steps), desc="Computing..."):
+            q_ns[..., k] = q_ns[..., k-1] + self.h * dq_ns[..., k-1] + \
+                0.5 * self.h**2 * ddq_ns[..., k-1]
+            dq_half_ns[..., k] = dq_ns[..., k-1] + \
+                0.5 * self.h * ddq_ns[..., k-1]
+            ext_force_n = structs[0].ext_force_n(ext_forces[0], self.n[0])
+            ext_force_n = np.hstack((ext_force_n, ext_force_body))
+            if np.ndim(self.n) != 0:
+                for j in range(len(ext_force_n)):
+                    ext_force_n_ts[j, k] = ext_force_n[j](t[k])
+            else:
+                ext_force_n_ts[..., k] = ext_force_n(t[k])
+            ddq_u_ns[..., k] = self.solve_unconstrained(
+                q_ns[..., k], dq_half_ns[..., k], ext_force_n_ts[..., k],
+                m_n, k_n, c_n)
+            # solve constraints
+            #
+            # ddq_ns[i][..., k] = w_mat_list[i] @ ddq_u_ns[i][..., k]
+            ddq_ns[..., k] = w_mat @ np.vstack(ddq_u_ns)[..., k]
+            #
+            dq_ns[..., k] = dq_ns[..., k-1] + 0.5 * \
+                self.h * (ddq_ns[..., k-1] + ddq_ns[..., k])
+        q_ns = np.split(q_ns, [len(self.n[0])])
+        dq_ns = np.split(dq_ns, [len(self.n[0])])
+        ddq_ns = np.split(ddq_ns, [len(self.n[0])])
+        ext_force_n_ts = np.split(ext_force_n_ts, [len(self.n[0])])
         return t, q_ns, dq_ns, ddq_ns, ext_force_n_ts

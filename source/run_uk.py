@@ -117,27 +117,28 @@ if __name__ == "__main__":
 
     if log.do_save:
         df_q_n.to_csv(output_spreadsheet_path / 'q_n.csv')
-        df_ddq_n.to_csv(output_spreadsheet_path / 'dq_n.csv')
+        df_dq_n.to_csv(output_spreadsheet_path / 'dq_n.csv')
         df_ddq_n.to_csv(output_spreadsheet_path / 'ddq_n.csv')
         df_ext_force_n_t.to_csv(output_spreadsheet_path / 'ext_force_n_t.csv')
 
-    if log.do_log or log.do_save:
-        # EXCITATION FORCE ext_force
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(1, 1, 1, projection='3d')
-        f_x = ext_force_string(xx, tt)
-        surf = ax.plot_surface(xx, tt, f_x, cmap='coolwarm')
-        ax.set_title('Excitation force applied to the string')
-        ax.set_xlabel('$x$ (m)')
-        ax.set_ylabel('$t$ (s)')
-        ax.set_zlabel('$F_{ext}(x, t)$ (N)')
-        fig.colorbar(surf, ax=ax)
-        if log.do_save:
-            fig.savefig(output_figure_path / 'ext_force.svg',
-                        facecolor='none', transparent=True)
-        if log.do_log:
-            plt.show()
-        plt.close(fig)
+    if (log.do_log or log.do_save):
+        if log.force:
+            # EXCITATION FORCE ext_force
+            fig = plt.figure(figsize=(8, 6))
+            ax = fig.add_subplot(1, 1, 1, projection='3d')
+            f_x = ext_force_string(xx, tt)
+            surf = ax.plot_surface(xx, tt, f_x, cmap='coolwarm')
+            ax.set_title('Excitation force applied to the string')
+            ax.set_xlabel('$x$ (m)')
+            ax.set_ylabel('$t$ (s)')
+            ax.set_zlabel('$F_{ext}(x, t)$ (N)')
+            fig.colorbar(surf, ax=ax)
+            if log.do_save:
+                fig.savefig(output_figure_path / 'ext_force.svg',
+                            facecolor='none', transparent=True)
+            if log.do_log:
+                plt.show()
+            plt.close(fig)
 
         # TOTAL DISPLACEMENT of the string
         fig = plt.figure(figsize=(8, 6))
@@ -166,19 +167,22 @@ if __name__ == "__main__":
             axes = []
             surfs = []
             for (j, y_j) in enumerate(y_n):
-                ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
+                # ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
+                ax = fig.add_subplot(2, len(y_n)//2+1, j+1)
                 axes.append(ax)
-                y_x = y_j(xx)
+                # y_x = y_j(xx)
+                y_x = y_j(log.audio.x_s_rel * string.data.l)
                 #
-                surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
+                # surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
+                surf = ax.plot(t, y_x)
                 surfs.append(surf)
                 #
                 ax.set_title(f'$n={j}$')
                 ax.set_xlabel('$x$ (m)')
                 ax.set_ylabel('$t$ (s)')
-                ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
+                # ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
             # add heat map
-            fig.colorbar(surfs[0], ax=axes)
+            # fig.colorbar(surfs[0], ax=axes)
             if log.do_save:
                 fig.savefig(output_figure_path / 'y_n.svg',
                             facecolor='none', transparent=True)
