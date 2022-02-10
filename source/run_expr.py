@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 import argparse
 
-from expr.util import load_analysis, save_analysis, compute_analysis_figures
+from expr.analysis import load_analysis, save_analysis, compute_analysis_figures
 from util.util import load_data_json
 
 

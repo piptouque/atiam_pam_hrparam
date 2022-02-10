@@ -15,6 +15,8 @@ ACallableFloatVec = Union[Callable[[AFloat], npt.NDArray[float]],
 
 
 class GuitarStringData:
+    """[summary]
+    """
     def __init__(self, l: float, t: float, rho: float, e: float, i: float, eta_f: float, eta_a: float, eta_b: float) -> None:
         """
             Notations and values taken from:
@@ -25,8 +27,7 @@ class GuitarStringData:
             The Journal of the Acoustical Society of America, 2017, vol. 141, no 2, p. 764-778.
 
 
-        Args:
-            l (float): length (m)
+        Args: l (float): length (m)
             t (float): tension (N)
             rho (float): mass per unit length (kg/m)
             e (float):
@@ -77,7 +78,9 @@ class GuitarStringData:
 
 
 class GuitarBodyData:
-    def __init__(self, n: AInt, f_n: AFloat, ksi_n: AFloat, m_n: AFloat) -> None:
+    """[summary]
+    """
+    def __init__(self, n: AInt, f_n: AFloat, ksi_n: AFloat, m_n: AFloat, phi_n: AFloat) -> None:
         """Guitar body parameters.
         Measured beforehand.
 
@@ -85,12 +88,14 @@ class GuitarBodyData:
             n (AInt): Modes,
             f_n (AFloat): Modal frequencies,
             ksi_n (AFloat): Modal damping ratios,
-            m_n (AFloat): Modal masses.
+            m_n (AFloat): Modal masses,
+            phi_n (AFloat): Modeshapes real value at the bridge.
         """
         self.n = n
         self.f_n = f_n
         self.ksi_n = ksi_n
         self.m_n = m_n
+        self.phi_n = phi_n
 
         if np.ndim(n) != 0:
             assert (len(n) == len(f_n)) and (len(n) == len(
@@ -104,5 +109,6 @@ class GuitarBodyData:
             'n': self.n,
             'f_n': self.f_n,
             'ksi_n': self.ksi_n,
-            'm_n': self.m_n
+            'm_n': self.m_n,
+            'phi_n': self.phi_n
         }

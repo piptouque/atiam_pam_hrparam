@@ -25,7 +25,28 @@ def compute_frf(
 
 
 def to_db(data: npt.NDArray[float]) -> npt.NDArray[float]:
-    return 20 * np.log(data)
+    """[summary]
+
+    Args:
+        data (npt.NDArray[float]): [description]
+
+    Returns:
+        npt.NDArray[float]: [description]
+    """
+    return 10 * np.log10(data)
+
+
+def snr(signal: npt.NDArray[float], noise: npt.NDArray[float]) -> float:
+    """Computes signal to noise ratio (SNR) of a noisy signal and its noise.
+
+    Args:
+        signal (npt.NDArray[float]): [description]
+        noise (npt.NDArray[float]): [description]
+
+    Returns:
+        float: [description]
+    """
+    return to_db(np.sum(signal**2) / np.sum(noise**2))
 
 
 def load_data_json(path: str, cls=SimpleNamespace, **kwargs) -> object:
