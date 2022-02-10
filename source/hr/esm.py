@@ -23,10 +23,10 @@ class EsmModel:
             amps (npt.NDArray[float]): [description]
             phis (npt.NDArray[float]): [description]
         """
-        gammas = np.array(gammas)
-        nus = np.array(nus)
-        amps = np.array(amps)
-        phis = np.array(phis)
+        gammas = np.asarray(gammas)
+        nus = np.asarray(nus)
+        amps = np.asarray(amps)
+        phis = np.asarray(phis)
         r = gammas.shape[0]
         # Some safety checks
         s = gammas.shape

@@ -18,7 +18,8 @@ class EsmSubspaceDecomposer:
         n_esprit: int,
         p_max_ester: int,
         n_fft_noise: int,
-        smoothing_factor_noise: float,
+        smoothing_factor_noise: float = 1,
+        quantile_ratio_noise: float = 1 / 3,
         ar_ordre_noise: int = 10,
         thresh_ratio_ester: float = 0.1,
     ) -> None:
@@ -29,6 +30,7 @@ class EsmSubspaceDecomposer:
         self.n_esprit = n_esprit
         #
         self.smoothing_factor_noise = smoothing_factor_noise
+        self.quantile_ratio_noise = quantile_ratio_noise
         self.ar_ordre_noise = ar_ordre_noise
         #
         self.p_max_ester = p_max_ester
@@ -58,7 +60,12 @@ class EsmSubspaceDecomposer:
 
         # 2. Whiten the noise
         x_white = NoiseWhitening.whiten(
-            x, self.n_fft_noise, fs=self.fs, ar_ordre=self.ar_ordre_noise
+            x,
+            self.n_fft_noise,
+            fs=self.fs,
+            ar_ordre=self.ar_ordre_noise,
+            quantile_ratio=self.quantile_ratio_noise,
+            smoothing_factor=self.smoothing_factor_noise,
         )
 
         # 3. Apply ESPRIT on the whitened signal
@@ -183,20 +190,22 @@ class NoiseWhitening:
 
     @staticmethod
     def _estimate_noise_psd(
-        x_psd: npt.NDArray[complex], nu_width: float
+        x_psd: npt.NDArray[complex], quantile_ratio: float, nu_width: float
     ) -> npt.NDArray[complex]:
         """Estimates the noise's PSD with a median filter (smoothing the signal's PSD)
         Args:
             x_psd (npt.NDArray[complex]): [description]
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
+            nu_width (float): Width ratio for the rank filtre, in normalised frequency (in [0, 1]).
 
         Returns:
             npt.NDArray[complex]: Estimated PSD of the noise.
         """
         n_fft = x_psd.shape[-1]
         size = int(np.round(nu_width * n_fft))
-
-        noise_psd = img.median_filter(x_psd, size=size)
+        # choose rank in function of the chosen quantile
+        rank = int(np.round(quantile_ratio * size))
+        noise_psd = img.rank_filter(x_psd, rank=rank, size=size)
         return noise_psd
 
     @classmethod
@@ -205,6 +214,7 @@ class NoiseWhitening:
         x: npt.NDArray[complex],
         n_fft: int,
         fs: float = 1,
+        quantile_ratio: float = 1 / 3,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
         """Estimates the noise's PSD from a temporal signal.
@@ -212,8 +222,9 @@ class NoiseWhitening:
         Args:
             x (npt.NDArray[complex]): [description]
             n_fft (int): Number of frequency bins
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
             fs (float): Sampling rate
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
 
         Returns:
             npt.NDArray[complex]: [description]
@@ -235,7 +246,9 @@ class NoiseWhitening:
         )
 
         # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
-        noise_psd = cls._estimate_noise_psd(x_psd, nu_width)
+        noise_psd = cls._estimate_noise_psd(
+            x_psd, quantile_ratio=quantile_ratio, nu_width=nu_width
+        )
         return noise_psd
 
     @classmethod
@@ -245,6 +258,7 @@ class NoiseWhitening:
         n_fft: int,
         fs: float = 1,
         ar_ordre: int = 10,
+        quantile_ratio: float = 1 / 3,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
         """Estimate the coefficients of the filtre generating the coloured noise from a white one.
@@ -252,16 +266,21 @@ class NoiseWhitening:
         Args:
             x (npt.NDArray[complex]): Input temporal signal, for each frequency band
             n_fft (int): Number of frequential bins
+            fs (float): Sampling rate
             ar_ordre (int): Ordre of the estimated AR filtre. ~ 10?
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
             smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
                 At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
-            fs (float): Sampling rate
 
         Returns:
             npt.NDArray[complex]: Coefficients of the AR filtre.
         """
         noise_psd = cls.estimate_noise_psd(
-            x, n_fft=n_fft, fs=fs, smoothing_factor=smoothing_factor
+            x,
+            n_fft=n_fft,
+            fs=fs,
+            quantile_ratio=quantile_ratio,
+            smoothing_factor=smoothing_factor,
         )
         # Step 3: calculating the autocovariance of the noise
         # autocovariance (vector) of the noise
@@ -283,6 +302,7 @@ class NoiseWhitening:
         x: npt.NDArray[complex],
         n_fft: int,
         fs: float = 1,
+        quantile_ratio: float = 1 / 3,
         ar_ordre: int = 10,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
@@ -291,15 +311,21 @@ class NoiseWhitening:
         Args:
             x (npt.NDArray[complex]): Input temporal signal
             n_fft (int): Number of frequential bins
-            ar_ordre (int): Ordre of the estimated AR filtre
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
             fs (float): Sampling rate
+            ar_ordre (int): Ordre of the estimated AR filtre
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
 
         Returns:
             npt.NDArray[complex]: Temporal signal with noise whitened.
         """
         b = cls.estimate_noise_ar_coeffs(
-            x, n_fft=n_fft, fs=fs, ar_ordre=ar_ordre, smoothing_factor=smoothing_factor
+            x,
+            n_fft=n_fft,
+            fs=fs,
+            ar_ordre=ar_ordre,
+            quantile_ratio=quantile_ratio,
+            smoothing_factor=smoothing_factor,
         )
         # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
         # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
@@ -391,7 +417,7 @@ class Ester:
             npt.NDArray[float]: [description]
         """
         e = cls.error(x, n, p_max)
-        j = np.array([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
+        j = np.asarray([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
         return j
 
     @classmethod
