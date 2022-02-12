@@ -4,7 +4,7 @@ import scipy.ndimage as img
 import numpy as np
 import numpy.typing as npt
 
-from typing import Tuple, List
+from typing import Tuple, List, Union
 
 from hr.esm import EsmModel
 
@@ -49,16 +49,7 @@ class EsmSubspaceDecomposer:
             n_fft (int): [description]
         """
 
-        # 1. Estimate the ESM model ordre on the original noisy signal
-        # because ESTER does work quite as well with the whitened signal
-        r = Ester.estimate_esm_ordre(
-            x,
-            self.n_esprit,
-            self.p_max_ester,
-            thresh_ratio=self.thresh_ratio_ester,
-        )
-
-        # 2. Whiten the noise
+        # 1. Whiten the noise
         x_white = NoiseWhitening.whiten(
             x,
             self.n_fft_noise,
@@ -66,6 +57,15 @@ class EsmSubspaceDecomposer:
             ar_ordre=self.ar_ordre_noise,
             quantile_ratio=self.quantile_ratio_noise,
             smoothing_factor=self.smoothing_factor_noise,
+        )
+
+        # 2. Estimate the ESM model ordre on the whitened signal
+        # because ESTER does work quite as well with the whitened signal
+        r = Ester.estimate_esm_ordre(
+            x_white,
+            self.n_esprit,
+            self.p_max_ester,
+            thresh_ratio=self.thresh_ratio_ester,
         )
 
         # 3. Apply ESPRIT on the whitened signal
@@ -93,10 +93,10 @@ class Esprit:
         return x_h @ x_h.transpose().conj() / l
 
     @classmethod
-    def spectral_mats(
+    def subspace_weighting_mats(
         cls, x: npt.NDArray[complex], n: int, k: int
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
-        """Gets W and W_per used in ESPRIT algorithm
+        """Gets W and W_per the subspace weighting matrices used in ESPRIT algorithm
 
         Args:
             x (npt.NDArray[complex]): [description]
@@ -176,7 +176,7 @@ class Esprit:
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        w, w_per = cls.spectral_mats(x, n, k)
+        w, w_per = cls.subspace_weighting_mats(x, n, k)
         gammas, nus = cls.estimate_dampfreq(w)
         amps, phis = cls.estimate_amp(x, gammas, nus)
 
@@ -335,6 +335,139 @@ class NoiseWhitening:
         return x_whitened
 
 
+class AdaptiveEsprit:
+    """Centralised methods used in the Adaptive ESPRIT framework."""
+
+    @staticmethod
+    def _step_spectral_matrix(
+        psi_prev: npt.NDArray[complex],
+        e: npt.NDArray[complex],
+        g: npt.NDArray[complex],
+        w: npt.NDArray[complex],
+        w_prev: npt.NDArray[complex]
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """Sing
+        See Badeau et al., 2005
+        and HrHatrac David et al., 2006
+        For reference. Same notations as the first article.
+
+        Args:
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
+            e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
+            g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
+            w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$)
+        """
+        # Init values of interest from parameters
+        nu = w[-1].T.conj()
+        nu_norm_sq = np.sum(np.abs(nu)**2)
+        w_down_prev, w_up_prev = w_prev[:-1], w_prev[1:]
+        e_down, e_up = e[:-1], e[1:]
+        # Algorithm given in Table 1
+        e_minus = w_down_prev.T.conj() @ e_up
+        e_plus = w_up_prev.T.conj() @ e_down
+        e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
+        psi = psi_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi_vec = psi.T.conj() @ nu
+        phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
+        return phi_mat, psi
+
+    @staticmethod
+    def _step_spectral_matrix_fae(
+        psi_prev: npt.NDArray[complex],
+        e: npt.NDArray[complex],
+        g: npt.NDArray[complex],
+        w: npt.NDArray[complex],
+        w_prev: npt.NDArray[complex],
+        phi_mat_prev: npt.NDArray[complex]
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]:
+        """
+        See Badeau et al., 2005, part 3. 'Spectral matrix tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
+            e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
+            g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
+            w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$, $\bar{a}$, $\bar{b}$)
+        """
+        # Init values of interest from parameters
+        nu = w[-1].T.conj()
+        nu_norm_sq = np.sum(np.abs(nu)**2)
+        w_down_prev, w_up_prev = w_prev[:-1], w_prev[1:]
+        e_down, e_up = e[:-1], e[1:]
+        # Algorithm given in Table 1
+        e_minus = w_down_prev.T.conj() @ e_up
+        e_plus = w_up_prev.T.conj() @ e_down
+        e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
+        psi = psi_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi_vec = psi.T.conj() @ nu
+        # phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
+        # Additional stuff
+        phi_vec_prev = psi_prev.conj().H @ nu_prev
+        nu_prev = w_prev[-1].T.conj()
+        nu_prev_norm_sq = np.sum(np.abs(nu_prev)**2)
+        e_n = e[-1]
+        #
+        e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi_vec
+        delta_phi_vec = phi_vec / (1 - nu_norm_sq) - phi_vec_prev / (1 - nu_prev_norm_sq)
+        #
+        a_bar = np.stack((g, e_minus, nu_prev), axis=0)
+        b_bar = np.stack((e_plus_apap, g, delta_phi_vec), axis=0)
+        phi_mat = phi_mat_prev + a_bar @ b_bar.T.conj()
+        return phi_mat, psi, a_under, b_bar
+        
+
+    @staticmethod
+    def _step_eigenvals_fae(
+        g_mat_prev: npt.NDArray[complex],
+        g_ap_mat_prev: npt.NDArray[complex],
+        d_vec_prev: npt.NDArray[complex],
+        phi_mat: npt.NDArray[complex],
+        a_bar: npt.NDArray[complex],
+        b_bar: npt.NDArray[complex]
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """
+        See Badeau et al., 2005, part 4. 'Eigenvalues tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            g_mat_prev (npt.NDArray[complex]): [description]
+            g_ap_mat_prev (npt.NDArray[complex]): [description]
+            d_vec_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+            a_bar (npt.NDArray[complex]): [description]
+            b_bar (npt.NDArray[complex]): [description]
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
+        """
+        #
+        a_bar_tilde = g_ap_mat_prev.T.conj() @ a_bar
+        b_bar_tilde = g_mat_prev.T.conj() @ b_bar
+        #
+        def phi_bar(z: complex) -> npt.NDArray[complex]:
+            car = 1 / (z - d_vec_prev)
+            dar = b_bar_tilde.T.conj() @ np.diag(car) @ a_bar_tilde
+            # TODO: what is I_bar?? I'm putting the identity for now.
+            return np.identity(like=dar) - dar
+        #
+        g_ap_mat = None # TODO
+        g_ap_tilde_mat = None # TODO
+        #
+        g_mat = g_mat_prev @ g_tilde_mat
+        g_ap_mat = g_ap_mat_prev @ g_ap_tilde_mat
+        #
+        d_mat  = g_ap_mat.T.conj() @ phi_mat @ g_mat
+        return d_mat, g_mat
+
+
 class Ester:
     """See Badeau et al., 2006"""
 
@@ -361,7 +494,7 @@ class Ester:
             1 <= p_max < n - 1
         ), f"Maximum ordre p_max={p_max} should be less than n-1={n-1}."
 
-        w, _ = Esprit.spectral_mats(x, n, p_max)
+        w, _ = Esprit.subspace_weighting_mats(x, n, p_max)
         w_cap = [w[:, :p] for p in range(p_max + 1)]
         #
         # nus are (p)-vecs
@@ -395,7 +528,7 @@ class Ester:
             phi[p][:-1] = phi[p - 1] + mu_p * psi_l[p]
             phi[p][-1] = psi_r[p].T.conj() @ nu[p - 1] + mu_p * psi_lr[p].conj()
             w_cap_down_p = w_cap[p][:-1]
-            e[p] = ksi_cap[p] - 1 / (1 - alg.norm(nu[p], ord=None) ** 2) * np.outer(
+            e[p] = ksi_cap[p] - 1 / (1 - np.sum(np.abs(nu[p]) ** 2) * np.outer(
                 (w_cap_down_p @ nu[p]), phi[p].T.conj()
             )
         # discard p=0 case (meaningless)
@@ -452,3 +585,26 @@ class Ester:
         # first index corresponds to p=1, second to p=2 etc.
         r = np.amax(j_max_thres_ids) + 1
         return r
+
+
+class FiltreBank:
+    """Some filtre bank design stuff"""
+
+    def __init__(
+        self, nb_bands: int, decimation_factor: int, scale: Union["lin", "log"]
+    ) -> None:
+        self.nb_bands = nb_bands
+        self.scale = scale
+        self.decimation_factor = decimation_factor
+
+    def process(x: npt.NDArray[complex]) -> npt.NDArray[complex]:
+        """[summary]
+
+        Args:
+            x (npt.NDArray[complex]): [description]
+
+        Returns:
+            npt.NDArray[complex]: (nb_bands, input_size // decimation factor)
+        """
+        assert x.ndim == 1
+        x_bands = np.empty((self.nb_bands,) + x.shape)
