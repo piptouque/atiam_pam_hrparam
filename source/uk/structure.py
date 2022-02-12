@@ -559,3 +559,23 @@ class ModalSimulation:
         ddq_ns = np.split(ddq_ns, [len(self.n[0])])
         ext_force_n_ts = np.split(ext_force_n_ts, [len(self.n[0])])
         return t, q_ns, dq_ns, ddq_ns, ext_force_n_ts
+
+    def step(self, q_n: AFloat, dq_n: AFloat,
+             ddq_n: AFloat, ext_force_n: AFloat, c_n: AFloat, k_n: AFloat,
+             m_n: AFloat, m_halfinv_mat: AFloat, a_mat: AFloat, b_plus_mat: AFloat,
+             w_mat: AFloat):
+        """
+        Step function to compute next modal quantities from the previous ones.
+        Can be used to avoid storing huge arrays in memory.
+        """
+        q_n = q_n + self.h * dq_n + 0.5 * self.h**2 * ddq_n
+        dq_half_n = dq_n + 0.5 * self.h * ddq_n
+        ddq_u_n = self.solve_unconstrained(q_n, dq_half_n, ext_force_n,
+                                           m_n, k_n, c_n)
+        # solve constraints
+        #
+        ddq_n_old = ddq_n
+        ddq_n = w_mat @ ddq_u_n
+        #
+        dq_n = dq_n + 0.5 * self.h * (ddq_n + ddq_n_old)
+        return q_n, dq_n, ddq_n, ext_force_n
