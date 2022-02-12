@@ -1,0 +1,53 @@
+{
+    "win": {
+        "ham": {
+            "name": "boxcar",
+            "length": 80,
+            "kwargs": {}
+        },
+        "wire": {
+            "name": "boxcar",
+            "attack_length": 400,
+            "kwargs": {}
+        },
+        "acc": {
+            "attack_length": 400,
+            "name": "exponential",
+            "kwargs": {
+                "center": 0,
+                "tau": 10e3
+            }
+        },
+        "mic": {
+            "attack_length": 400,
+            "name": "exponential",
+            "kwargs": {
+                "center": 0,
+                "tau": 10e3
+            }
+        }
+    },
+    "spec": {
+        "n_fft": 1024,
+        "n_overlap": 256,
+        "win": {
+            "length": 1024,
+            "name": "blackman"
+        }
+    },
+    "hr": {
+        "esprit": {
+            "n": 64
+        },
+        "whitening": {
+            "n_fft": 1024,
+            "ar_ordre": 10,
+            "smoothing_factor": 3.1,
+            "quantile_ratio": 0.3
+        },
+        "ester": {
+            "p_max": 32,
+            "thresh_ratio": 0.1
+        }
+    }
+}

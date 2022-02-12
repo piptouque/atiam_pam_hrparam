@@ -71,25 +71,25 @@ plot(time,signal_accelero_fen, 'r')
 plot(time,Fenetre_libre_acc_1*max(signal_accelero),'r')
 title('accelerometre')
 xlabel('temps [s]')
-ylabel('Accélération [m.s^{-1}]')
+ylabel('Accélération [m.s^{-2}]')
 
 axFreq1 = subplot(4,2,2); %Signaux fréquentiels du marteau (non-fenetrés et fenetrés)
 plot(freq,db(F(1:Nfft/2))), hold on
 plot(freq,db(F_fenetre(1:Nfft/2)), 'r')
 title('marteau')
-xlabel('frequence [s]')
+xlabel('Fréquence [Hz]')
 ylabel('Force [N]')
 
-axFreq2 = subplot(4,2,4); %Signaux temporels de l'accéléromètre(non-fenetrés et fenetrés)
+axFreq2 = subplot(4,2,4); %Signaux fréquentiels de l'accéléromètre(non-fenetrés et fenetrés)
 plot(freq,db(A(1:Nfft/2))), hold on
 plot(freq,db(A_fenetre(1:Nfft/2)), 'r')
 title('accelerometre')
-xlabel('fréquence (Hz)')
+xlabel('Fréquence (Hz)')
 ylabel('Accélération [m.s^{-2}]')
 
 axFreq3 = subplot(4,1,3); %Module de la FRF
 plot(freq,db(FRF(1:Nfft/2)))
-xlabel('fréquence (Hz)')
+xlabel('Fréquence (Hz)')
 ylabel('Accélérance [dB]')
 
 axFreq4 = subplot(4,1,4);  %Phase de la FRF
@@ -110,7 +110,11 @@ Final.micro.brut = signal_micro;
 Final.FRF = FRF(1:Nfft/2);
 Final.freq = freq;
 Final.time = time;
+Final.fs = fs;
+Final.fen.start = Indice_deb
+Final.fen.length = largeur
 
 file_name = 'FirstStringGuitar_CopperWired01mm_FifthFret_1.mat';
+Final.excitation_type = 'wire'
 
 save(file_name, 'Final');
