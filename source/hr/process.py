@@ -291,7 +291,7 @@ class NoiseWhitening:
         # the constant column of the Yule-Walker system
         r = ac_coeffs[1:ar_ordre].T
         # the AR coefficients (indices 1, ..., N-1)
-        b = -alg.pinv(r_mat) @ r
+        b = -np.asarray(alg.pinv(r_mat, return_rank=False) @ r)
         # the AR coefficients (indices 0, ..., N-1)
         b = np.insert(b, 0, 1)
         return b
@@ -416,11 +416,11 @@ class AdaptiveEsprit:
         phi_vec = psi.T.conj() @ nu
         # phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
         # Additional stuff
-        phi_vec_prev = psi_prev.conj().H @ nu_prev
         nu_prev = w_prev[-1].T.conj()
         nu_prev_norm_sq = np.sum(np.abs(nu_prev) ** 2)
         e_n = e[-1]
         #
+        phi_vec_prev = psi_prev.conj().H @ nu_prev
         e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi_vec
         delta_phi_vec = phi_vec / (1 - nu_norm_sq) - phi_vec_prev / (
             1 - nu_prev_norm_sq
@@ -429,7 +429,7 @@ class AdaptiveEsprit:
         a_bar = np.stack((g, e_minus, nu_prev), axis=0)
         b_bar = np.stack((e_plus_apap, g, delta_phi_vec), axis=0)
         phi_mat = phi_mat_prev + a_bar @ b_bar.T.conj()
-        return phi_mat, psi, a_under, b_bar
+        return phi_mat, psi, a_bar, b_bar
 
     @staticmethod
     def _step_eigenvals_fae(
@@ -465,6 +465,7 @@ class AdaptiveEsprit:
             return np.identity(like=dar) - dar
 
         #
+        g_tilde_mat = None # TODO
         g_ap_mat = None  # TODO
         g_ap_tilde_mat = None  # TODO
         #
