@@ -465,7 +465,7 @@ class AdaptiveEsprit:
             return np.identity(like=dar) - dar
 
         #
-        g_tilde_mat = None # TODO
+        g_tilde_mat = None  # TODO
         g_ap_mat = None  # TODO
         g_ap_tilde_mat = None  # TODO
         #
@@ -474,6 +474,164 @@ class AdaptiveEsprit:
         #
         d_mat = g_ap_mat.T.conj() @ phi_mat @ g_mat
         return d_mat, g_mat
+
+
+class Yast:
+    """See Badeau et al., 2008"""
+
+    @classmethod
+    def spectral_weights_mat_corr(
+        cls,
+        x: npt.NDArray[float],
+        w_prev: npt.NDArray[complex],
+        c_xx_prev: npt.NDArray[complex],
+        c_yy_prev: npt.NDArray[complex],
+        track_principal: bool,
+        beta: float = 0.99,
+        nb_it: int = 2,
+        thresh: float = 0.01,
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]:
+        """[summary]
+
+        See Table 1, for the YAST algorithm
+
+        Args:
+            x (npt.NDArray[float]): [description]
+            w_prev (npt.NDArray[complex]): [description]
+            c_xx_prev (npt.NDArray[complex]): [description]
+            c_yy_prev (npt.NDArray[complex]): [description]
+            beta (float, optional): Forgetting factor. Defaults to 0.99.
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($W(t)$, $C_{xx}(t)$, $C_{yy}(t)$)
+        """
+        y = w_prev.T.conj() @ x
+        e = x - w_prev @ y
+        sigma = alg.norm(e, ord=None)
+        if np.isclose(sigma, 0):
+            # no change from last time
+            return w_prev, c_xx_prev, c_yy_prev
+        u = e / sigma
+        x_ap = c_xx_prev @ x
+        y_ap = c_yy_prev @ y
+        y_apap = w_prev.T.conj() @ x_ap
+        c_yy_ap = beta * c_yy_prev + y @ y.T.conj()
+        z = beta * (y_apap - y_ap) / sigma + sigma * y
+        gamma = sigma**2 + (beta / sigma**2) * (
+            x.T.conj() @ x_ap - 2 * np.real(y.T.conj() @ y_apap) + y.T.conj() @ y_ap
+        )
+        # Filling $\bar{C}_{yy}(t)
+        c_yy_bar = np.empty(c_yy_ap.shape + tuple(np.ones(c_yy_ap.ndim)))
+        c_yy_bar[:-1, :-1] = c_yy_ap
+        c_yy_bar[:-1, -1] = z.T.conj()
+        c_yy_bar[-1, :-1] = z
+        c_yy_bar[-1, -1] = gamma
+        #
+        phi_bar, lambd = cls.conjugate_gradient(
+            c_yy_ap,
+            c_yy_bar,
+            z,
+            track_principal=track_principal,
+            nb_it=nb_it,
+            thresh=thresh,
+        )
+        # Decomposition of vector phi_bar
+        phi_small = np.abs(phi_bar[-1])
+        assert phi_small <= 1, "Noooo"
+        theta = phi_bar[-1] / phi_small
+        epsilon = np.sqrt(1 - phi_small**2)
+        phi = phi_bar[:-1] / (theta * epsilon)
+        #
+        e_1 = np.zeros_like(phi)
+        e_1[0] = 1
+        e_1 = -np.exp(1j * np.angle(phi[0])) * e_1
+        #
+        a = (phi - e_1) / alg.norm(phi - e_1, ord=None)
+        b = w_prev @ a
+        q = w_prev - 2 * b @ a.T.conj() - epsilon * u @ e_1.T.conj()
+        q_1 = q[:, 0]
+        d_vec = np.ones_like(phi)
+        d_vec[0] = 1 / alg.norm(q_1, ord=None)
+        d_mat = np.diag(d_vec)
+        w = q @ d_mat
+        #
+        c_yy_ap_a = c_yy_ap @ a
+        a_ap = 4 * (c_yy_ap_a - (a.T.conj() @ c_yy_ap_a) @ a)
+        z_ap = 2 * z - 4 * (a.T.conj() @ z) @ a - epsilon * gamma * e_1
+        #
+        c_yy_apap = c_yy_ap - a_ap @ a.T.conj() - epsilon * z_ap @ e_1.T.conj()
+        c_yy_apap = (c_yy_apap + c_yy_apap.T.conj()) / 2
+        #
+        c_yy = d_mat @ c_yy_apap @ d_mat
+        return w, c_xx, c_yy
+
+    @classmethod
+    def conjugate_gradient(
+        cls,
+        c_yy_ap: npt.NDArray[complex],
+        c_yy_bar: npt.NDArray[complex],
+        z: npt.NDArray[complex],
+        track_principal: bool,
+        nb_it: int = 1,
+        thresh: float = 0.01,
+    ) -> Tuple[npt.NDArray[complex], complex]:
+        """See Table II, Conjugate Gradient algorithm
+
+        Returns:
+            [type]: [description]
+        """
+        if nb_it is None and thresh is None:
+            thresh = 0.01
+        g = z / alg.norm(z, ord=None)
+        p = c_yy_ap @ g - (g.T.conj() @ c_yy_ap @ g) @ g
+        #
+        s = np.stack((np.zeros_like(g), p / alg.norm(p, ord=None), g), axis=1)
+        s = np.concatenate((s, [1, 0, 0]), axis=0)
+        #
+        c_ys_bar = c_yy_bar @ s
+        c_ss = s.T.conj() @ c_ys_bar
+        print(c_ss.shape)
+        assert c_ss.shape == (3, 3)
+        k = 0
+        delta_j = np.inf
+        lambd = None
+        theta_vec = None
+        while (k is None or k < nb_it) and (
+            thresh is None or alg.norm(delta_j) > thresh
+        ):
+            w, vr = alg.eig(c_ss, left=False, right=True)
+            w_norm = arg.norm(w)
+            idx_extr = np.argmax(w_norm) if track_principal else np.argmin(w_norm)
+            theta_vec = w[idx_extr]
+            lambd = vr[idx_extr]
+            #
+            theta_round = np.asarray(
+                [
+                    -alg.norm([theta_vec[1], theta_vec[2]], ord=2),
+                    theta_vec[0].conj()
+                    * (theta_vec[1] / np.abs(theta_vec[1]))
+                    / np.sqrt(1 + np.abs(theta_vec[2] / theta_vec[1]) ** 2),
+                    theta_vec[0].conj()
+                    * (theta_vec[2] / np.abs(theta_vec[2]))
+                    / np.sqrt(1 + np.abs(theta_vec[1] / theta_vec[2]) ** 2),
+                ]
+            )
+            theta_mat = np.stack((theta_vec, theta_round), axis=1)
+            s[:, :2] = s @ theta_mat
+            c_ys_bar[:, :2] = c_ys_bar @ theta_mat
+            c_ss[:2, :2] = theta_mat.T.conj() @ c_ss @ theta_mat
+            delta_j = 2 * (c_ys_bar[:, 0] - lambd * s[:, 1])
+            #
+            g = delta_j / alg.norm(delta_j)
+            g = g - s[:, :2] @ (s_[:, :2].T.conj() @ g)
+            g = g / alg.norm(g)
+            #
+            s[:, 2] = g
+            c_ys_bar[:, 2] = c_yy_bar @ s[:, 2]
+            c_ss[:, 2] = s.T.conj() @ c_ys_var[:, 2]
+            c_ss[2, :] = c_ss[:, 3].T.conj()
+        phi_bar = s[:, 0]
+        return phi_bar, lambd
 
 
 class Ester:
@@ -564,7 +722,7 @@ class Ester:
     @classmethod
     def estimate_esm_ordre(
         cls, x: npt.NDArray[complex], n: int, p_max: int, thresh_ratio: float = 0.1
-    ) -> npt.NDArray[float]:
+    ) -> int:
         """Gets the estimated ESM model ordre r using the ESTER algorithm.
         see: http://ieeexplore.ieee.org/document/1576975/
 
