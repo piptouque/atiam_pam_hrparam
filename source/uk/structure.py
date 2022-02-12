@@ -7,12 +7,18 @@ import scipy.integrate as integrate
 from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
 
-from uk.data import GuitarStringData, GuitarBodyData, AFloat, AInt, ACallableFloat, ACallableFloatVec
+from uk.data import (
+    GuitarStringData,
+    GuitarBodyData,
+    AFloat,
+    AInt,
+    ACallableFloat,
+    ACallableFloatVec,
+)
 
 
 class Force:
-    """[summary]
-    """
+    """[summary]"""
 
     @abstractmethod
     def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
@@ -24,8 +30,7 @@ class Force:
 
 
 class ForceNull(Force):
-    """Placeholder constant null function.
-    """
+    """Placeholder constant null function."""
 
     def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
         return lambda t: 0
@@ -35,10 +40,11 @@ class ForceNull(Force):
 
 
 class ForceRamp(Force):
-    """[summary]
-    """
+    """[summary]"""
 
-    def __init__(self, x_rel: float, l: float, height: float, delta_x: float, delta_t: float) -> None:
+    def __init__(
+        self, x_rel: float, l: float, height: float, delta_x: float, delta_t: float
+    ) -> None:
         self.x_rel = x_rel
         self.l = l
         self.height = height
@@ -47,28 +53,34 @@ class ForceRamp(Force):
 
     def project_mode(self, phi: Callable[[float], float]) -> ACallableFloat:
         def _force_n(t: AFloat) -> AFloat:
-            # if the force is a Dirac in space, simplify the integral instead of computing it
+            # if the force is a Dirac in space, simplify the integral instead of computing it
             # in order to prevent numerical errors.
             if not np.isclose(self.delta_x, 0):
                 phi_val, err = integrate.quad(
-                    phi, (self.x_rel - self.delta_x/2)*self.l, (self.x_rel + self.delta_x/2)*self.l)
+                    phi,
+                    (self.x_rel - self.delta_x / 2) * self.l,
+                    (self.x_rel + self.delta_x / 2) * self.l,
+                )
             else:
                 phi_val = phi(self.x_rel * self.l)
             return (t <= self.delta_t) * self.height * t / self.delta_t * phi_val
+
         return _force_n
 
     def __call__(self, x: AFloat, t: AFloat) -> AFloat:
-        val = (t <= self.delta_t) * \
-            (np.abs(x/self.l - self.x_rel) <= self.delta_x/2)
+        val = (t <= self.delta_t) * (
+            np.abs(x / self.l - self.x_rel) <= self.delta_x / 2
+        )
         return self.height * t / self.delta_t * val
 
 
 class ModalStructure:
     """A base trait for modal structures.
-        The modes start at 0,
-        so f_0 is the fundamental.
+    The modes start at 0,
+    so f_0 is the fundamental.
 
     """
+
     @abstractmethod
     def f_n(self, n: AInt) -> AFloat:
         """Modal frequencies
@@ -178,7 +190,9 @@ class ModalStructure:
             force_n = ext_force.project_mode(phi_n)
             return force_n
 
-    def solve_unconstrained(self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force_n_t: AFloat) -> AFloat:
+    def solve_unconstrained(
+        self, q_n: AFloat, dq_n: AFloat, n: AInt, ext_force_n_t: AFloat
+    ) -> AFloat:
         """Solves the unconstrained system.
         See equation (42) in:
 
@@ -199,18 +213,18 @@ class ModalStructure:
         c_n = self.c_n(n)
         k_n = self.k_n(n)
         m_n = self.m_n(n)
-        ddq_u_n = (- c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
+        ddq_u_n = (-c_n * dq_n - k_n * q_n + ext_force_n_t) / m_n
         return ddq_u_n
 
     def y_n(self, q_n: AFloat, n: AInt) -> ACallableFloatVec:
         """[summary]
 
         Args:
-            q_n (AFloat): The modal responses, a 
+            q_n (AFloat): The modal responses, a
             n (AInt): The mode as an integer or modes as an array of integers.
 
         Returns:
-            ACallableFloatVec: For each mode, a (x) function 
+            ACallableFloatVec: For each mode, a (x) function
                 returning the displacement as a time array:
                     [y_n(t=0), ... y_n(t=t_f)]
         """
@@ -220,6 +234,7 @@ class ModalStructure:
 
             def _y_j(j: int):
                 return lambda x: phi_n[j](x) * q_n[j]
+
             for j in range(len(n)):
                 y_n[j] = _y_j(j)
             return y_n
@@ -228,8 +243,7 @@ class ModalStructure:
 
 
 class GuitarBody(ModalStructure):
-    """Model for the inert guitar body.
-    """
+    """Model for the inert guitar body."""
 
     def __init__(self, data: GuitarBodyData) -> None:
         self.data = data
@@ -242,7 +256,7 @@ class GuitarBody(ModalStructure):
         if np.ndim(ids) > 0:
             n = np.empty_like(ids)
             for (j, idx) in enumerate(ids):
-                n_idx, = np.where(self.data.n == idx)
+                (n_idx,) = np.where(self.data.n == idx)
                 n[j] = n_idx
             return n
         else:
@@ -261,7 +275,13 @@ class GuitarBody(ModalStructure):
         # no info on the modeshapes for the body.
         # we enforce a constant value of the bridge modeshapes
         # FIX version multidimensionnelle ne marche pas
-        return np.array([lambda x: self.data.phi_n[ids] for ids in n], dtype=type(Callable)) if np.ndim(n) != 0 else lambda x: self.data.phi_n[n]
+        return (
+            np.array(
+                [lambda x: self.data.phi_n[ids] for ids in n], dtype=type(Callable)
+            )
+            if np.ndim(n) != 0
+            else lambda x: self.data.phi_n[n]
+        )
 
     def bridge_coupling(self, n: AInt, case="rigid") -> AFloat:
         if case == "rigid":
@@ -278,17 +298,16 @@ class GuitarBody(ModalStructure):
         """
         return np.zeros((1, len(n)), dtype=float)
 
-    @ property
+    @property
     def extends(self) -> Tuple[float, float]:
         # same thing, we don't know.
         return (0, 0)
 
 
 class GuitarString(ModalStructure):
-    """Model for the guitar string.
-    """
+    """Model for the guitar string."""
 
-    def __init__(self,  data: GuitarStringData) -> None:
+    def __init__(self, data: GuitarStringData) -> None:
         self.data = data
 
     def _p_n(self, n: AInt) -> AFloat:
@@ -300,11 +319,16 @@ class GuitarString(ModalStructure):
         Returns:
             AFloat: Modal factors used in some other modal parameters.
         """
-        return (2*n + 1) * np.pi / (2 * self.data.l)
+        return (2 * n + 1) * np.pi / (2 * self.data.l)
 
     def f_n(self, n: AInt) -> AFloat:
         p_n = self._p_n(n)
-        return self.data.c_t / (2 * np.pi) * p_n * (1 + p_n ** 2 * self.data.b / (2 * self.data.t))
+        return (
+            self.data.c_t
+            / (2 * np.pi)
+            * p_n
+            * (1 + p_n**2 * self.data.b / (2 * self.data.t))
+        )
 
     def m_n(self, n: AInt) -> AFloat:
         phi_n = self.phi_n(n)
@@ -312,25 +336,28 @@ class GuitarString(ModalStructure):
         if np.ndim(n) != 0:
             integs = np.empty(n.shape, dtype=float)
             for i in range(len(n)):
-                integ, err = integrate.quad(
-                    lambda x: phi_n[i](x)**2, x_1, x_2)
+                integ, err = integrate.quad(lambda x: phi_n[i](x) ** 2, x_1, x_2)
                 integs[i] = integ
             return self.data.rho * integs
         else:
-            integ, err = integrate.quad(lambda x:  phi_n(x)**2, 0, self.data.l)
+            integ, err = integrate.quad(lambda x: phi_n(x) ** 2, 0, self.data.l)
             return self.data.rho * integ
 
     def ksi_n(self, n: AInt) -> AFloat:
         p_n = self._p_n(n)
         f_n = self.f_n(n)
-        return (self.data.t * (self.data.eta_f + self.data.eta_a / (2 * np.pi * f_n))
-                + self.data.eta_b * self.data.b * p_n ** 2) / (2 * (self.data.t + self.data.b * p_n**2))
+        return (
+            self.data.t * (self.data.eta_f + self.data.eta_a / (2 * np.pi * f_n))
+            + self.data.eta_b * self.data.b * p_n**2
+        ) / (2 * (self.data.t + self.data.b * p_n**2))
 
     def phi_n(self, n: AInt) -> ACallableFloat:
         p_n = self._p_n(n)
         if np.ndim(n) != 0:
+
             def _phi(j: int):
                 return lambda x: np.sin(p_n[j] * x)
+
             phi_ns = np.empty(n.shape, dtype=type(Callable))
             for j in range(len(n)):
 
@@ -359,7 +386,7 @@ class GuitarString(ModalStructure):
             a_mat[0, j] = phi_n[j](self.data.l * finger_rel_pos)
         return a_mat
 
-    def bridge_coupling(self, n: AInt, case='rigid'):
+    def bridge_coupling(self, n: AInt, case="rigid"):
         """
         constraint matrix for a rigid body constraining the string at the bridge.
         """
@@ -369,20 +396,28 @@ class GuitarString(ModalStructure):
             a_mat[0, j] = phi_n[j](self.data.l)
         return a_mat
 
-    @ property
+    @property
     def extends(self) -> Tuple[float, float]:
         return (0, self.data.l)
 
 
 class ModalSimulation:
-    """A constraint solver and simulation for the U-K formulation of modal analysis.
-    """
+    """A constraint solver and simulation for the U-K formulation of modal analysis."""
 
-    def __init__(self, nb_modes: (int or list), nb_steps: int, h: float, num_struct=None, coupling="rigid") -> None:
+    def __init__(
+        self,
+        nb_modes: (int or list),
+        nb_steps: int,
+        h: float,
+        num_struct=None,
+        coupling="rigid",
+    ) -> None:
         if isinstance(nb_modes, int):
             if num_struct is None:
-                raise TypeError("number of structures num_struct should be defined if nb_modes is int")
-            self.n = [np.arange(nb_modes)]*num_struct
+                raise TypeError(
+                    "number of structures num_struct should be defined if nb_modes is int"
+                )
+            self.n = [np.arange(nb_modes)] * num_struct
         else:
             self.n = [np.arange(nb_mode) for nb_mode in nb_modes]
         self.nb_steps = nb_steps
@@ -390,14 +425,16 @@ class ModalSimulation:
         self.coupling = coupling
 
         self._param_dict = {
-            'n': self.n,
-            'nb_steps': self.nb_steps,
-            'h': h,
-            'coupling': self.coupling
+            "n": self.n,
+            "nb_steps": self.nb_steps,
+            "h": h,
+            "coupling": self.coupling,
         }
 
     # @staticmethod
-    def solve_constraints(self, structs: List[ModalStructure], a_ns: List[List[npt.NDArray[float]]]) -> List[List[npt.NDArray[float]]]:
+    def solve_constraints(
+        self, structs: List[ModalStructure], a_ns: List[List[npt.NDArray[float]]]
+    ) -> List[List[npt.NDArray[float]]]:
         """
         For now, a_ns, b_ns are constants in time.
         a_ns[i] are the list of constraints applied on sub-structure i.
@@ -411,17 +448,35 @@ class ModalSimulation:
         assert len(a_ns) == len(structs)
         #
         a_mat = np.hstack(a_ns)
-        #b_vec = np.array(b_ns)
+        # b_vec = np.array(b_ns)
 
-        m_halfinv_mat = np.diag(list(chain.from_iterable(
-            [np.power(struct.m_n(self.n[s]), -0.5) for s, struct in enumerate(structs)])))
+        m_halfinv_mat = np.diag(
+            list(
+                chain.from_iterable(
+                    [
+                        np.power(struct.m_n(self.n[s]), -0.5)
+                        for s, struct in enumerate(structs)
+                    ]
+                )
+            )
+        )
         #
         b_mat = a_mat @ m_halfinv_mat
         b_plus_mat = np.linalg.pinv(b_mat)
-        w_mat = np.eye(sum([len(self.n[s]) for s in range(len(self.n))])) - m_halfinv_mat @ b_plus_mat @ a_mat
+        w_mat = (
+            np.eye(sum([len(self.n[s]) for s in range(len(self.n))]))
+            - m_halfinv_mat @ b_plus_mat @ a_mat
+        )
         return w_mat
 
-    def run(self, structs: List[ModalStructure], ext_forces: List[Callable[[float, float], float]], q_n_is: List[AFloat], dq_n_is: List[AFloat], finger_constraints: List[float]) -> Tuple[List[npt.NDArray[AFloat]]]:
+    def run(
+        self,
+        structs: List[ModalStructure],
+        ext_forces: List[Callable[[float, float], float]],
+        q_n_is: List[AFloat],
+        dq_n_is: List[AFloat],
+        finger_constraints: List[float],
+    ) -> Tuple[List[npt.NDArray[AFloat]]]:
         """Solve the constrained system.
         Based on the velocity-Verlet algorithm described in:
 
@@ -439,16 +494,24 @@ class ModalSimulation:
         Returns:
             Tuple[List[npt.NDArray[AFloat]]]: Tuple of computed times, modal responses, associated derivative and modal external forces for each modal structure.
         """
-        assert len(structs) == len(ext_forces) and len(
-            structs) == len(q_n_is) and len(structs) == len(dq_n_is) \
+        assert (
+            len(structs) == len(ext_forces)
+            and len(structs) == len(q_n_is)
+            and len(structs) == len(dq_n_is)
             and len(finger_constraints) == len(structs)
+        )
 
         def _make_vec():
             if np.ndim(self.n) != 0:
-                return [np.zeros(self.n[i].shape + (self.nb_steps,), dtype=float)
-                        for i in range(len(structs))]
+                return [
+                    np.zeros(self.n[i].shape + (self.nb_steps,), dtype=float)
+                    for i in range(len(structs))
+                ]
             else:
-                return [np.zeros((self.nb_steps,), dtype=float) for i in range(len(structs))]
+                return [
+                    np.zeros((self.nb_steps,), dtype=float) for i in range(len(structs))
+                ]
+
         q_ns = _make_vec()
         dq_ns = _make_vec()
         ddq_ns = _make_vec()
@@ -470,14 +533,18 @@ class ModalSimulation:
         idx = np.cumsum([len(num_mode) for num_mode in self.n])
         idx = np.insert(idx, 0, 0)
         for i in range(len(structs)):
-            w_mat_list.append(w_mat[idx[i]:idx[i+1], idx[i]:idx[i+1]])
+            w_mat_list.append(w_mat[idx[i] : idx[i + 1], idx[i] : idx[i + 1]])
         for k in range(1, self.nb_steps):
             for i in range(len(structs)):
                 struct = structs[i]
-                q_ns[i][..., k] = q_ns[i][..., k-1] + self.h * dq_ns[i][..., k-1] + \
-                    0.5 * self.h**2 * ddq_ns[i][..., k-1]
-                dq_half_ns[i][..., k] = dq_ns[i][..., k-1] + \
-                    0.5 * self.h * ddq_ns[i][..., k-1]
+                q_ns[i][..., k] = (
+                    q_ns[i][..., k - 1]
+                    + self.h * dq_ns[i][..., k - 1]
+                    + 0.5 * self.h**2 * ddq_ns[i][..., k - 1]
+                )
+                dq_half_ns[i][..., k] = (
+                    dq_ns[i][..., k - 1] + 0.5 * self.h * ddq_ns[i][..., k - 1]
+                )
                 ext_force_n = struct.ext_force_n(ext_forces[i], self.n[i])
                 if np.ndim(self.n) != 0:
                     for j in range(len(self.n[i])):
@@ -485,12 +552,17 @@ class ModalSimulation:
                 else:
                     ext_force_n_ts[i][..., k] = ext_force_n(t[k])
                 ddq_u_ns[i][..., k] = struct.solve_unconstrained(
-                    q_ns[i][..., k], dq_half_ns[i][..., k], self.n[i], ext_force_n_ts[i][..., k])
+                    q_ns[i][..., k],
+                    dq_half_ns[i][..., k],
+                    self.n[i],
+                    ext_force_n_ts[i][..., k],
+                )
                 # solve constraints
                 #
                 ddq_ns[i][..., k] = w_mat_list[i] @ ddq_u_ns[i][..., k]
                 #ddq_ns[i][..., k] = (w_mat @ np.vstack(ddq_u_ns)[..., k])[idx[i]:idx[i+1]]
                 #
-                dq_ns[i][..., k] = dq_ns[i][..., k-1] + 0.5 * \
-                    self.h * (ddq_ns[i][..., k-1] + ddq_ns[i][..., k])
+                dq_ns[i][..., k] = dq_ns[i][..., k - 1] + 0.5 * self.h * (
+                    ddq_ns[i][..., k - 1] + ddq_ns[i][..., k]
+                )
         return t, q_ns, dq_ns, ddq_ns, ext_force_n_ts

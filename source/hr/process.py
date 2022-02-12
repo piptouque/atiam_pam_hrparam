@@ -4,7 +4,7 @@ import scipy.ndimage as img
 import numpy as np
 import numpy.typing as npt
 
-from typing import Tuple, List
+from typing import Tuple, List, Union
 
 from hr.esm import EsmModel
 
@@ -18,7 +18,8 @@ class EsmSubspaceDecomposer:
         n_esprit: int,
         p_max_ester: int,
         n_fft_noise: int,
-        smoothing_factor_noise: float,
+        smoothing_factor_noise: float = 1,
+        quantile_ratio_noise: float = 1 / 3,
         ar_ordre_noise: int = 10,
         thresh_ratio_ester: float = 0.1,
     ) -> None:
@@ -29,6 +30,7 @@ class EsmSubspaceDecomposer:
         self.n_esprit = n_esprit
         #
         self.smoothing_factor_noise = smoothing_factor_noise
+        self.quantile_ratio_noise = quantile_ratio_noise
         self.ar_ordre_noise = ar_ordre_noise
         #
         self.p_max_ester = p_max_ester
@@ -47,18 +49,23 @@ class EsmSubspaceDecomposer:
             n_fft (int): [description]
         """
 
-        # 1. Estimate the ESM model ordre on the original noisy signal
+        # 1. Whiten the noise
+        x_white = NoiseWhitening.whiten(
+            x,
+            self.n_fft_noise,
+            fs=self.fs,
+            ar_ordre=self.ar_ordre_noise,
+            quantile_ratio=self.quantile_ratio_noise,
+            smoothing_factor=self.smoothing_factor_noise,
+        )
+
+        # 2. Estimate the ESM model ordre on the whitened signal
         # because ESTER does work quite as well with the whitened signal
         r = Ester.estimate_esm_ordre(
-            x,
+            x_white,
             self.n_esprit,
             self.p_max_ester,
             thresh_ratio=self.thresh_ratio_ester,
-        )
-
-        # 2. Whiten the noise
-        x_white = NoiseWhitening.whiten(
-            x, self.n_fft_noise, fs=self.fs, ar_ordre=self.ar_ordre_noise
         )
 
         # 3. Apply ESPRIT on the whitened signal
@@ -86,10 +93,10 @@ class Esprit:
         return x_h @ x_h.transpose().conj() / l
 
     @classmethod
-    def spectral_mats(
+    def subspace_weighting_mats(
         cls, x: npt.NDArray[complex], n: int, k: int
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
-        """Gets W and W_per used in ESPRIT algorithm
+        """Gets W and W_per the subspace weighting matrices used in ESPRIT algorithm
 
         Args:
             x (npt.NDArray[complex]): [description]
@@ -169,7 +176,7 @@ class Esprit:
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        w, w_per = cls.spectral_mats(x, n, k)
+        w, w_per = cls.subspace_weighting_mats(x, n, k)
         gammas, nus = cls.estimate_dampfreq(w)
         amps, phis = cls.estimate_amp(x, gammas, nus)
 
@@ -183,20 +190,22 @@ class NoiseWhitening:
 
     @staticmethod
     def _estimate_noise_psd(
-        x_psd: npt.NDArray[complex], nu_width: float
+        x_psd: npt.NDArray[complex], quantile_ratio: float, nu_width: float
     ) -> npt.NDArray[complex]:
         """Estimates the noise's PSD with a median filter (smoothing the signal's PSD)
         Args:
             x_psd (npt.NDArray[complex]): [description]
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
+            nu_width (float): Width ratio for the rank filtre, in normalised frequency (in [0, 1]).
 
         Returns:
             npt.NDArray[complex]: Estimated PSD of the noise.
         """
         n_fft = x_psd.shape[-1]
         size = int(np.round(nu_width * n_fft))
-
-        noise_psd = img.median_filter(x_psd, size=size)
+        # choose rank in function of the chosen quantile
+        rank = int(np.round(quantile_ratio * size))
+        noise_psd = img.rank_filter(x_psd, rank=rank, size=size)
         return noise_psd
 
     @classmethod
@@ -205,6 +214,7 @@ class NoiseWhitening:
         x: npt.NDArray[complex],
         n_fft: int,
         fs: float = 1,
+        quantile_ratio: float = 1 / 3,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
         """Estimates the noise's PSD from a temporal signal.
@@ -212,8 +222,9 @@ class NoiseWhitening:
         Args:
             x (npt.NDArray[complex]): [description]
             n_fft (int): Number of frequency bins
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
             fs (float): Sampling rate
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
 
         Returns:
             npt.NDArray[complex]: [description]
@@ -235,7 +246,9 @@ class NoiseWhitening:
         )
 
         # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
-        noise_psd = cls._estimate_noise_psd(x_psd, nu_width)
+        noise_psd = cls._estimate_noise_psd(
+            x_psd, quantile_ratio=quantile_ratio, nu_width=nu_width
+        )
         return noise_psd
 
     @classmethod
@@ -245,6 +258,7 @@ class NoiseWhitening:
         n_fft: int,
         fs: float = 1,
         ar_ordre: int = 10,
+        quantile_ratio: float = 1 / 3,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
         """Estimate the coefficients of the filtre generating the coloured noise from a white one.
@@ -252,16 +266,21 @@ class NoiseWhitening:
         Args:
             x (npt.NDArray[complex]): Input temporal signal, for each frequency band
             n_fft (int): Number of frequential bins
+            fs (float): Sampling rate
             ar_ordre (int): Ordre of the estimated AR filtre. ~ 10?
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
             smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
                 At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
-            fs (float): Sampling rate
 
         Returns:
             npt.NDArray[complex]: Coefficients of the AR filtre.
         """
         noise_psd = cls.estimate_noise_psd(
-            x, n_fft=n_fft, fs=fs, smoothing_factor=smoothing_factor
+            x,
+            n_fft=n_fft,
+            fs=fs,
+            quantile_ratio=quantile_ratio,
+            smoothing_factor=smoothing_factor,
         )
         # Step 3: calculating the autocovariance of the noise
         # autocovariance (vector) of the noise
@@ -283,6 +302,7 @@ class NoiseWhitening:
         x: npt.NDArray[complex],
         n_fft: int,
         fs: float = 1,
+        quantile_ratio: float = 1 / 3,
         ar_ordre: int = 10,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
@@ -291,15 +311,21 @@ class NoiseWhitening:
         Args:
             x (npt.NDArray[complex]): Input temporal signal
             n_fft (int): Number of frequential bins
-            ar_ordre (int): Ordre of the estimated AR filtre
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
             fs (float): Sampling rate
+            ar_ordre (int): Ordre of the estimated AR filtre
+            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
 
         Returns:
             npt.NDArray[complex]: Temporal signal with noise whitened.
         """
         b = cls.estimate_noise_ar_coeffs(
-            x, n_fft=n_fft, fs=fs, ar_ordre=ar_ordre, smoothing_factor=smoothing_factor
+            x,
+            n_fft=n_fft,
+            fs=fs,
+            ar_ordre=ar_ordre,
+            quantile_ratio=quantile_ratio,
+            smoothing_factor=smoothing_factor,
         )
         # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
         # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
@@ -307,6 +333,146 @@ class NoiseWhitening:
         # denominator coeff of the FIR's transfer function is 1
         x_whitened = sig.lfilter(b, [1], x)
         return x_whitened
+
+
+class AdaptiveEsprit:
+    """Centralised methods used in the Adaptive ESPRIT framework."""
+
+    @staticmethod
+    def _step_spectral_matrix(
+        psi_prev: npt.NDArray[complex],
+        e: npt.NDArray[complex],
+        g: npt.NDArray[complex],
+        w: npt.NDArray[complex],
+        w_prev: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """Sing
+        See Badeau et al., 2005
+        and HrHatrac David et al., 2006
+        For reference. Same notations as the first article.
+
+        Args:
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
+            e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
+            g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
+            w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$)
+        """
+        # Init values of interest from parameters
+        nu = w[-1].T.conj()
+        nu_norm_sq = np.sum(np.abs(nu) ** 2)
+        w_down_prev, w_up_prev = w_prev[:-1], w_prev[1:]
+        e_down, e_up = e[:-1], e[1:]
+        # Algorithm given in Table 1
+        e_minus = w_down_prev.T.conj() @ e_up
+        e_plus = w_up_prev.T.conj() @ e_down
+        e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
+        psi = psi_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi_vec = psi.T.conj() @ nu
+        phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
+        return phi_mat, psi
+
+    @staticmethod
+    def _step_spectral_matrix_fae(
+        psi_prev: npt.NDArray[complex],
+        e: npt.NDArray[complex],
+        g: npt.NDArray[complex],
+        w: npt.NDArray[complex],
+        w_prev: npt.NDArray[complex],
+        phi_mat_prev: npt.NDArray[complex],
+    ) -> Tuple[
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+    ]:
+        """
+        See Badeau et al., 2005, part 3. 'Spectral matrix tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
+            e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
+            g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
+            w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$, $\bar{a}$, $\bar{b}$)
+        """
+        # Init values of interest from parameters
+        nu = w[-1].T.conj()
+        nu_norm_sq = np.sum(np.abs(nu) ** 2)
+        w_down_prev, w_up_prev = w_prev[:-1], w_prev[1:]
+        e_down, e_up = e[:-1], e[1:]
+        # Algorithm given in Table 1
+        e_minus = w_down_prev.T.conj() @ e_up
+        e_plus = w_up_prev.T.conj() @ e_down
+        e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
+        psi = psi_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi_vec = psi.T.conj() @ nu
+        # phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
+        # Additional stuff
+        phi_vec_prev = psi_prev.conj().H @ nu_prev
+        nu_prev = w_prev[-1].T.conj()
+        nu_prev_norm_sq = np.sum(np.abs(nu_prev) ** 2)
+        e_n = e[-1]
+        #
+        e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi_vec
+        delta_phi_vec = phi_vec / (1 - nu_norm_sq) - phi_vec_prev / (
+            1 - nu_prev_norm_sq
+        )
+        #
+        a_bar = np.stack((g, e_minus, nu_prev), axis=0)
+        b_bar = np.stack((e_plus_apap, g, delta_phi_vec), axis=0)
+        phi_mat = phi_mat_prev + a_bar @ b_bar.T.conj()
+        return phi_mat, psi, a_under, b_bar
+
+    @staticmethod
+    def _step_eigenvals_fae(
+        g_mat_prev: npt.NDArray[complex],
+        g_ap_mat_prev: npt.NDArray[complex],
+        d_vec_prev: npt.NDArray[complex],
+        phi_mat: npt.NDArray[complex],
+        a_bar: npt.NDArray[complex],
+        b_bar: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """
+        See Badeau et al., 2005, part 4. 'Eigenvalues tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            g_mat_prev (npt.NDArray[complex]): [description]
+            g_ap_mat_prev (npt.NDArray[complex]): [description]
+            d_vec_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+            a_bar (npt.NDArray[complex]): [description]
+            b_bar (npt.NDArray[complex]): [description]
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
+        """
+        #
+        a_bar_tilde = g_ap_mat_prev.T.conj() @ a_bar
+        b_bar_tilde = g_mat_prev.T.conj() @ b_bar
+        #
+        def phi_bar(z: complex) -> npt.NDArray[complex]:
+            car = 1 / (z - d_vec_prev)
+            dar = b_bar_tilde.T.conj() @ np.diag(car) @ a_bar_tilde
+            # TODO: what is I_bar?? I'm putting the identity for now.
+            return np.identity(like=dar) - dar
+
+        #
+        g_ap_mat = None  # TODO
+        g_ap_tilde_mat = None  # TODO
+        #
+        g_mat = g_mat_prev @ g_tilde_mat
+        g_ap_mat = g_ap_mat_prev @ g_ap_tilde_mat
+        #
+        d_mat = g_ap_mat.T.conj() @ phi_mat @ g_mat
+        return d_mat, g_mat
 
 
 class Ester:
@@ -335,7 +501,7 @@ class Ester:
             1 <= p_max < n - 1
         ), f"Maximum ordre p_max={p_max} should be less than n-1={n-1}."
 
-        w, _ = Esprit.spectral_mats(x, n, p_max)
+        w, _ = Esprit.subspace_weighting_mats(x, n, p_max)
         w_cap = [w[:, :p] for p in range(p_max + 1)]
         #
         # nus are (p)-vecs
@@ -364,13 +530,13 @@ class Ester:
             psi_l_p = psi_l[p]
             ksi_cap[p][:, :-1] = ksi_cap[p - 1] - np.outer(w_down_p, psi_l_p.conj())
             ksi_cap[p][:, -1] = ksi_p
-            # 3. Computation of e[p] from ksi_cap[p]
+            # 3. Compute e[p] from ksi_cap[p]
             mu_p = nu[p][-1]
             phi[p][:-1] = phi[p - 1] + mu_p * psi_l[p]
             phi[p][-1] = psi_r[p].T.conj() @ nu[p - 1] + mu_p * psi_lr[p].conj()
             w_cap_down_p = w_cap[p][:-1]
-            e[p] = ksi_cap[p] - 1 / (1 - alg.norm(nu[p], ord=None) ** 2) * np.outer(
-                (w_cap_down_p @ nu[p]), phi[p].T.conj()
+            e[p] = ksi_cap[p] - 1 / (1 - np.sum(np.abs(nu[p]) ** 2)) * np.outer(
+                w_cap_down_p @ nu[p], phi[p].T.conj()
             )
         # discard p=0 case (meaningless)
         e = e[1:]
@@ -391,7 +557,7 @@ class Ester:
             npt.NDArray[float]: [description]
         """
         e = cls.error(x, n, p_max)
-        j = np.array([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
+        j = np.asarray([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
         return j
 
     @classmethod
@@ -426,3 +592,26 @@ class Ester:
         # first index corresponds to p=1, second to p=2 etc.
         r = np.amax(j_max_thres_ids) + 1
         return r
+
+
+class FiltreBank:
+    """Some filtre bank design stuff"""
+
+    def __init__(
+        self, nb_bands: int, decimation_factor: int, scale: Union["lin", "log"]
+    ) -> None:
+        self.nb_bands = nb_bands
+        self.scale = scale
+        self.decimation_factor = decimation_factor
+
+    def process(x: npt.NDArray[complex]) -> npt.NDArray[complex]:
+        """[summary]
+
+        Args:
+            x (npt.NDArray[complex]): [description]
+
+        Returns:
+            npt.NDArray[complex]: (nb_bands, input_size // decimation factor)
+        """
+        assert x.ndim == 1
+        x_bands = np.empty((self.nb_bands,) + x.shape)

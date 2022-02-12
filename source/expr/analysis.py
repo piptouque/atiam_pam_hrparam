@@ -148,8 +148,10 @@ def perform_analysis(
         fs=sr,
         n_esprit=conf.hr.esprit.n,
         p_max_ester=conf.hr.ester.p_max,
+        thresh_ratio_ester=conf.hr.ester.thresh_ratio,
         n_fft_noise=conf.hr.whitening.n_fft,  # TODO: set according to data -> excit, acc, etc.
         smoothing_factor_noise=conf.hr.whitening.smoothing_factor,
+        quantile_ratio_noise=conf.hr.whitening.quantile_ratio,
     )
     esm_excit_win, w_excit_win, w_per_excit_win, white_excit_win = decomp.perform(
         data_excit_win
@@ -508,6 +510,7 @@ def save_analysis(
     )
     #
     sr = data["sr"]
+    data_excit = data["temporal"]["mic"]["whole"]
     data_mic = data["temporal"]["mic"]["whole"]
     data_acc = data["temporal"]["acc"]["whole"]
     imp = data["temporal"]["imp"]["whole"]
@@ -545,6 +548,14 @@ def save_analysis(
     output_audio_path.mkdir(parents=True, exist_ok=True)
     output_spreadsheet_path.mkdir(parents=True, exist_ok=True)
     # audio
+    wav.write(
+        output_audio_path / "excit.wav", sr, data_excit / np.amax(np.abs(data_excit))
+    )
+    wav.write(
+        output_audio_path / "excit_win.wav",
+        sr,
+        data_excit_win / np.amax(np.abs(data_excit_win)),
+    )
     wav.write(output_audio_path / "mic.wav", sr, data_mic / np.amax(np.abs(data_mic)))
     wav.write(
         output_audio_path / "mic_win.wav", sr, data_mic / np.amax(np.abs(data_mic_win))
