@@ -476,11 +476,154 @@ class AdaptiveEsprit:
         return d_mat, g_mat
 
 
+class Fapi:
+    """See Badeau et al., 2005"""
+
+    @staticmethod
+    def _step_spectral_weights_fapi(
+        x: npt.NDArray[float],
+        w_prev: npt.NDArray[complex],
+        z_prev: npt.NDArray[float],
+        beta: float = 0.99,
+    ) -> Tuple[
+        npt.NDArray[complex],
+        npt.NDArray[float],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+    ]:
+        """[summary]
+
+        Args:
+            x (npt.NDArray[float]): [description]
+            w_prev (npt.NDArray[complex]): [description]
+            z_prev (npt.NDArray[float]): [description]
+            beta (float, optional): [description]. Defaults to 0.99.
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex]]: [description]
+        """
+        y = w_prev.T.conj() @ x
+        h = z_prev @ y
+        g = h / (beta + y.T.conj() @ h)
+        # $\epsilon^2$ in the article
+        diff_sq = np.sum(np.abs(x) ** 2 - np.abs(y) ** 2)
+        g_norm_sq = np.sum(np.abs(g) ** 2)
+        tau = diff_sq / (1 + diff_sq * g + np.sqrt(1 + diff_sq * g_norm_sq))
+        eta = 1 - tau * g_norm_sq
+        y_ap = eta * y + tau * g
+        h_ap = z_prev.T.conj() @ y_ap
+        epsilon_vec = (tau / eta) * (z_prev @ g - (h_ap.T.conj() @ g) * g)
+        z = (1 / beta) * (z_prev - g @ h_ap.T.conj() + epsilon_vec @ g.T.conj())
+        e_ap = eta * x - w_prev @ y_ap
+        w = w_prev + e_ap @ g.T.conj()
+        return w, z, e_ap, g
+
+    @staticmethod
+    def _step_spectral_weights_sw_fapi(
+        x_vec: npt.NDArray[float],
+        w_mat_prev: npt.NDArray[complex],
+        z_mat_prev: npt.NDArray[float],
+        x_mat_prev: npt.NDArray[float],
+        v_mat_hat_prev: npt.NDArray[float],
+        beta: float = 0.99,
+    ) -> Tuple[
+        npt.NDArray[complex],
+        npt.NDArray[float],
+        npt.NDArray[complex],
+        npt.NDArray[float],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+    ]:
+        """[summary]
+
+        Args:
+            x_vec (npt.NDArray[float]): [description]
+            w_mat_prev (npt.NDArray[complex]): [description]
+            z_mat_prev (npt.NDArray[float]): [description]
+            x_mat_prev (npt.NDArray[float]): [description]
+            v_mat_hat_prev (npt.NDArray[float]): [description]
+            beta (float, optional): Forgetting factor. Defaults to 0.99.
+
+        Returns:
+            Tuple[ npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex] ]:
+                ($W$, $Z$, $X$, $\hat{V}$, $e$, $g$)
+        """
+
+        # TODO: HOW TO COMPUTE INVERSE SQUARE ROOT??
+        # this?: https://stackoverflow.com/a/66160829
+        # don't think so..
+        # some additional definitions
+        l = x_mat_prev.shape[-1]
+        r = w_mat_prev.shape[-1]
+        # Rank of the update involved in equation (4)
+        # p = 2 in the truncated window case.
+        p = 2
+        j_mat_bar = np.asarray([1, 0], [0, -(beta**l)])
+        # Section similar to SW - PAST
+        # Update the $x(t)$ vector
+        x_vec_prev_l = x_mat_prev[:, 0]
+        # n x p matrix
+        x_vec_bar = np.stack((x_vec, x_vec_prev_l), axis=1)
+        # and the $X(t)$ matrix
+        x_mat = np.roll(x_mat_prev, shift=-1, axis=1)
+        x_mat[:, -1] = x_vec
+        # Update the $y(t)$ and $\hat{v}(t-l)$ vectors
+        # n x p matrix
+        y_vec = w_mat_prev.T.conj() @ x_vec
+        v_vec_hat_prev_l = v_mat_hat_prev[:, 0]
+        # and the $\hat{Y}(t)$ matrix
+        y_mat_hat = np.roll(v_mat_hat_prev, shift=-1, axis=1)
+        y_mat_hat[:, -1] = y_vec
+        v_vec_prev_l = w_mat_prev.T.conj() @ x_vec_prev_l
+        #
+        # a
+        y_vec_bar_hat = np.stack((y_vec, v_vec_hat_prev_l), axis=1)
+        y_vec_bar = np.stack((y_vec, v_vec_prev_l), axis=1)
+        # an r x p matrix
+        h_mat_bar = z_mat_prev @ y_vec_bar_hat
+        # an r x p matrix
+        g_mat_bar = h_mat_bar @ alg.inv(
+            beta * alg.inv(j_mat_bar) + y_vec_bar.T.conj() @ h
+        )
+        # TW - API main section
+        espilon_mat_bar = np.power(
+            x_vec_bar.T.conj() @ x_vec_bar - y_vec_bar.T.conj() @ y_vec_bar, 0.5
+        )  # TODO Not right
+        rho_mat_bar = (
+            np.identity(p)
+            + epsilon_mat_bar.T.conj()
+            @ (g_mat_bar.T.conj() @ g_mat_bar)
+            @ epsilon_mat_bar
+        )
+        # TODO
+        tau_mat_bar = (
+            espilon_mat_bar
+            @ alg.inv(rho_mat_bar + np.power(rho_mat, 0.5).T.conj())
+            @ espilon_mat_bar.T.conj()
+        )
+        eta_mat_bar = np.identity(p) - (g_mat_bar.T.conj() @ g_mat_bar) @ tau_mat_bar
+        y_vec_bar_ap = y_vec_bar @ eta_mat_bar + g_mat_bar @ tau_mat_bar
+        h_vec_bar_ap = z_mat_prev.T.conj() @ y_vec_bar_ap
+        epsilon_var_mat_bar = (
+            z_mat_prev @ g_mat_bar - g_mat_bar @ (h_vec_bar_ap.T.conj() @ g_mat_bar)
+        ) @ (tau_mat_bar @ np.inv(eta_mat_bar)).T.conj()
+        z_mat = (1 / beta) * (
+            z_mat_prev
+            - g_mat_bar @ h_vec_bar_ap.T.conj()
+            + epsilon_var_mat_bar @ g_mat_bar.T.conj()
+        )
+        # an n x p matrix
+        e_mat_bar_ap = x_vec_bar @ eta_vec_bar - w_mat_prev @ y_vec_bar_ap
+        w_mat = w_mat_prev + e_mat_bar_ap @ g_mat_bar.T.conj()
+        v_mat_hat = y_mat - g_mat_bar(g_mat_bar @ tau_mat_bar).T.conj() @ y_mat
+        return w_mat, z_mat, x_mat, v_mat_hat, e_mat_bar, g_mat_bar
+
+
 class Yast:
     """See Badeau et al., 2008"""
 
     @classmethod
-    def spectral_weights_mat_corr(
+    def step_spectral_weights(
         cls,
         x: npt.NDArray[float],
         w_prev: npt.NDArray[complex],
@@ -515,6 +658,9 @@ class Yast:
         x_ap = c_xx_prev @ x
         y_ap = c_yy_prev @ y
         y_apap = w_prev.T.conj() @ x_ap
+        # Added compared to Table 1
+        c_xx = beta * c_xx_prev + x @ x.T.conj()
+        #
         c_yy_ap = beta * c_yy_prev + y @ y.T.conj()
         z = beta * (y_apap - y_ap) / sigma + sigma * y
         gamma = sigma**2 + (beta / sigma**2) * (
@@ -527,7 +673,7 @@ class Yast:
         c_yy_bar[-1, :-1] = z
         c_yy_bar[-1, -1] = gamma
         #
-        phi_bar, lambd = cls.conjugate_gradient(
+        phi_bar, lambd = cls._step_conjugate_gradient(
             c_yy_ap,
             c_yy_bar,
             z,
@@ -565,9 +711,8 @@ class Yast:
         c_yy = d_mat @ c_yy_apap @ d_mat
         return w, c_xx, c_yy
 
-    @classmethod
-    def conjugate_gradient(
-        cls,
+    @staticmethod
+    def _step_conjugate_gradient(
         c_yy_ap: npt.NDArray[complex],
         c_yy_bar: npt.NDArray[complex],
         z: npt.NDArray[complex],
