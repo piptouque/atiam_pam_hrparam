@@ -108,59 +108,75 @@ class Esprit:
         """
         r_xx = cls._correlation_mat(x, n)
         u_1, _, _ = alg.svd(r_xx)
-        w = u_1[:, :k]
-        w_per = u_1[:, k:]
-        return w, w_per
+        w_cap = u_1[:, :k]
+        w_cap_per = u_1[:, k:]
+        return w_cap, w_cap_per
 
     @classmethod
-    def estimate_dampfreq(
+    def spectral_matrix(
         cls,
-        w: npt.NDArray[complex],
-    ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
-        """Estimates the normalised frequencies and normalised damping factors
+        w_cap: npt.NDArray[complex],
+    ) -> npt.NDArray[complex]:
+        """[summary]
+        Args:
+            w_cap (npt.NDArray[complex]): Subspace weighting matrix
+        Returns:
+            npt.NDArray[complex]: $\Phi$
+        """
+
+        w_cap_down = w_cap[:-1]
+        w_cap_up = w_cap[1:]
+        phi_cap = alg.pinv(w_cap_down) @ w_cap_up
+        return phi_cap
+
+    @classmethod
+    def estimate_poles(
+        cls,
+        phi_cap: npt.NDArray[complex],
+    ) -> npt.NDArray[complex]:
+        """Estimates the poles of the spectral matrix
+
+        Args:
+            phi_cap (npt.NDArray[complex]): Spectral matrix
+
+        Returns:
+            npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings)
+        """
+        zs = alg.eig(phi_cap, left=False, right=False)
+        return zs
+
+    @classmethod
+    def estimate_esm_params(
+        cls,
+        x: npt.NDArray[float],
+        zs: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]]:
+        """Estimates the normalised frequencies and normalised damping factors,
+        amplitude and initial phase
         for the ESM model using the ESPRIT algorithm.
 
         Args:
-            x (np.ndarray): input signal
-            n (int): number of lines in the Hankel matrix S
-            k (int): number of searched sinusoids
+            phi_cap (npt.NDArray[complex]): Spectral matrix
 
         Returns:
-            Tuple[npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings)
+            Tuple[npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings, estimated real amplitudes, estimated initial phases)
         """
-        w_down = w[:-1]
-        w_up = w[1:]
-        phi = alg.pinv(w_down) @ w_up
-        zs = alg.eig(phi, left=False, right=False)
         log_zs = np.log(zs)
+        # DAMPING RATIOS AND FREQUENCIES
         # no damping should ever be negative.
         # fix: just discard those that are.
         gammas = -np.minimum(0, np.real(log_zs))  # damping factors
         nus = np.imag(log_zs) / (2 * np.pi)  # frequencies
-        return gammas, nus
-
-    @classmethod
-    def estimate_amp(
-        cls, x: npt.NDArray[float], gammas: npt.NDArray[float], nus: npt.NDArray[float]
-    ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
-        """Estimate the amplitude in the ESM model using least-squares.
-
-        Args:
-            x (npt.NDArray[float]): Input signal
-            gammas (npt.NDArray[float]): Array of estimated normalised damping factors
-            nus (npt.NDArray[float]): Array of estimated normalised frequencies
-
-        Returns:
-            Tuple[npt.NDArray[float], npt.NDArray[float]]: (estimated real amplitudes, estimated initial phases)
-        """
-        n_s = len(x)  # signal's length
+        # REAL AMPLITUDES AND INITIAL PHASES
+        # signal's length
+        n_s = len(x)  
         ts = np.arange(n_s)  # array of discrete times
-        z_logs = -gammas + 2j * np.pi * nus  # log of the pole
-        v = np.exp(np.outer(ts, z_logs))  # Vandermonde matrix of dimension N
-        alphas = alg.pinv(v) @ x
+        # Vandermonde matrix of dimension N
+        v_mat = np.exp(np.outer(ts, log_zs))
+        alphas = alg.pinv(v_mat) @ x
         amps = np.abs(alphas)
         phis = np.angle(alphas)
-        return amps, phis
+        return gammas, nus, amps, phis
 
     @classmethod
     def estimate_esm(
@@ -176,13 +192,14 @@ class Esprit:
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        w, w_per = cls.subspace_weighting_mats(x, n, k)
-        gammas, nus = cls.estimate_dampfreq(w)
-        amps, phis = cls.estimate_amp(x, gammas, nus)
+        w_cap, w_cap_per = cls.subspace_weighting_mats(x, n, k)
+        phi_cap = cls.spectral_matrix(w_cap)
+        zs = cls.estimate_poles(phi_cap)
+        gammas, nus, amps, phis = cls.estimate_esm_params(x, zs)
 
         esm = EsmModel(gammas=gammas, nus=nus, amps=amps, phis=phis)
 
-        return (esm, w, w_per)
+        return (esm, w_cap, w_cap_per)
 
 
 class NoiseWhitening:
@@ -431,27 +448,29 @@ class AdaptiveSpectralMatrixTracking:
 
     @staticmethod
     def _step_eigen_fae(
-        g_cap_prev: npt.NDArray[complex],
-        g_cap_ap_prev: npt.NDArray[complex],
-        d_prev: npt.NDArray[complex],
         phi_cap: npt.NDArray[complex],
         a_bar: npt.NDArray[complex],
         b_bar: npt.NDArray[complex],
+        g_cap_prev: npt.NDArray[complex],
+        g_cap_ap_prev: npt.NDArray[complex],
+        d_prev: npt.NDArray[complex],
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """
         See Badeau et al., 2005, part 4. 'Eigenvalues tracking'
         For reference. Same notations as the first article.
 
         Args:
-            g_mat_prev (npt.NDArray[complex]): [description]
-            g_ap_mat_prev (npt.NDArray[complex]): [description]
-            d_vec_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+            phi_cap (npt.NDArray[complex]): [description]
             a_bar (npt.NDArray[complex]): [description]
             b_bar (npt.NDArray[complex]): [description]
+            g_cap_prev (npt.NDArray[complex]): [description]
+            g_ap_cap_prev (npt.NDArray[complex]): [description]
+            d_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
 
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
         """
+        raise NotImplementedError()
         #
         a_bar_tilde = g_cap_ap_prev.T.conj() @ a_bar
         b_bar_tilde = g_cap_prev.T.conj() @ b_bar
@@ -471,7 +490,44 @@ class AdaptiveSpectralMatrixTracking:
         g_cap_ap = g_cap_ap_prev @ g_cap_tilde_ap
         #
         d_cap = g_cap_ap.T.conj() @ phi_cap @ g_cap
-        return d_cap, g_cap
+        d = np.diagonal(d_cap)
+        return d, g_cap
+
+    @staticmethod
+    def _step_eigen_gradient(
+        phi_cap: npt.NDArray[complex],
+        d_prev: npt.NDArray[complex],
+        g_cap_prev: npt.NDArray[complex],
+        mu_d: float = 0.99,
+        mu_g: float = 0.99,
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """
+        See Badeau et al., 2005, part 4. 'Eigenvalues tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            g_cap_prev (npt.NDArray[complex]): [description]
+            g_cap_ap_prev (npt.NDArray[complex]): [description]
+            d_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+            a_bar (npt.NDArray[complex]): [description]
+            b_bar (npt.NDArray[complex]): [description]
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
+        """
+        assert 0 < mu_d < 1 and 0 < mu_g < 1
+        #
+        d = (1 - mu_d) * d_prev + mu_d * np.diagonal(
+            alg.inv(g_cap_prev) @ phi_cap @ g_cap_prev
+        )
+        e_cap_g_prev = g_cap_prev - phi_cap @ g_cap_prev @ np.diag(1 / d)
+        g_cap = (1 - mu_g) * g_cap_prev + mu_g * (
+            phi_cap @ g_cap_prev @ np.diag(1 / d)
+            + phi_cap.T.conj() @ e_cap_g_prev @ np.diag(1 / d.T.conj())
+        )
+        # TODO: normalise the columns of $V(t)$ for numerical stability
+        g_cap = g_cap / alg.norm(g_cap, axis=1, keepdims=True)
+        return d, g_cap
 
 
 class Fapi:
@@ -536,10 +592,10 @@ class Fapi:
 
         Args:
             x_vec (npt.NDArray[float]): [description]
-            w_mat_prev (npt.NDArray[complex]): [description]
-            z_mat_prev (npt.NDArray[float]): [description]
-            x_mat_prev (npt.NDArray[float]): [description]
-            v_mat_hat_prev (npt.NDArray[float]): [description]
+            w_cap_prev (npt.NDArray[complex]): [description]
+            z_cap_prev (npt.NDArray[float]): [description]
+            x_cap_prev (npt.NDArray[float]): [description]
+            v_cap_hat_prev (npt.NDArray[float]): [description]
             beta (float, optional): Forgetting factor. Defaults to 0.99.
 
         Returns:
@@ -585,28 +641,28 @@ class Fapi:
         epsilon_var_bar = alg.sqrtm(x_bar.T.conj() @ x_bar - y_bar.T.conj() @ y_bar)
         rho_bar = (
             np.identity(p)
-            + epsilon_mat_bar.T.conj() @ (g_bar.T.conj() @ g_bar) @ epsilon_mat_bar
+            + epsilon_var_bar.T.conj() @ (g_bar.T.conj() @ g_bar) @ epsilon_var_bar
         )
         # p x p positive definite matrix
-        tau_mat_bar = (
+        tau_bar = (
             epsilon_var_bar
-            @ alg.inv(rho_bar + alg.sqrtm(rho_mat).T.conj())
+            @ alg.inv(rho_bar + alg.sqrtm(rho_bar).T.conj())
             @ epsilon_var_bar.T.conj()
         )
-        eta_mat_bar = np.identity(p) - (g_bar.T.conj() @ g_bar) @ tau_mat_bar
-        y_bar_ap = y_bar @ eta_mat_bar + g_bar @ tau_mat_bar
+        eta_bar = np.identity(p) - (g_bar.T.conj() @ g_bar) @ tau_bar
+        y_bar_ap = y_bar @ eta_bar + g_bar @ tau_bar
         h_bar_ap = z_cap_prev.T.conj() @ y_bar_ap
         epsilon_bar = (z_cap_prev @ g_bar - g_bar @ (h_bar_ap.T.conj() @ g_bar)) @ (
-            tau_mat_bar @ np.inv(eta_mat_bar)
+            tau_bar @ np.inv(eta_bar)
         ).T.conj()
-        z_mat = (1 / beta) * (
+        z_cap = (1 / beta) * (
             z_cap_prev - g_bar @ h_bar_ap.T.conj() + epsilon_bar @ g_bar.T.conj()
         )
         # an n x p matrix
-        e_mat_bar_ap = x_bar @ eta_bar - w_cap_prev @ y_bar_ap
-        w_mat = w_cap_prev + e_mat_bar_ap @ g_bar.T.conj()
-        v_mat_hat = y_mat - g_bar(g_bar @ tau_mat_bar).T.conj() @ y_mat
-        return w_mat, z_mat, x_cap, v_mat_hat, e_mat_bar, g_bar
+        e_bar_ap = x_bar @ eta_bar - w_cap_prev @ y_bar_ap
+        w_cap = w_cap_prev + e_bar_ap @ g_bar.T.conj()
+        v_cap_hat = y_cap - g_bar(g_bar @ tau_bar).T.conj() @ y_cap
+        return w_cap, z_cap, x_cap, v_cap_hat, e_bar_ap, g_bar
 
 
 class Yast:
@@ -851,7 +907,9 @@ class Ester:
             npt.NDArray[float]: [description]
         """
         e_cap = cls.error(x, n, p_max)
-        j_cap = np.asarray([1 / alg.norm(e_cap[p], ord=None) ** 2 for p in range(len(e_cap))])
+        j_cap = np.asarray(
+            [1 / alg.norm(e_cap[p], ord=None) ** 2 for p in range(len(e_cap))]
+        )
         return j_cap
 
     @classmethod
@@ -882,7 +940,9 @@ class Ester:
         j_max_thres_ids, _ = sig.find_peaks(j_cap, height=j_max * thresh_ratio)
         # then filter peaks under threshold
         j_max_ids = sig.argrelextrema(j_cap, np.greater_equal, order=1, mode="clip")[0]
-        j_max_thres_ids = j_max_ids[np.nonzero(j_cap[j_max_ids] >= j_max * thresh_ratio)[0]]
+        j_max_thres_ids = j_max_ids[
+            np.nonzero(j_cap[j_max_ids] >= j_max * thresh_ratio)[0]
+        ]
         # first index corresponds to p=1, second to p=2 etc.
         r = np.amax(j_max_thres_ids) + 1
         return r
