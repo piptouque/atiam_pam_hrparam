@@ -335,54 +335,54 @@ class NoiseWhitening:
         return x_whitened
 
 
-class AdaptiveEsprit:
-    """Centralised methods used in the Adaptive ESPRIT framework."""
+class AdaptiveSpectralMatrixTracking:
+    """Some stuff from Badeau et al., 2005"""
 
     @staticmethod
     def _step_spectral_matrix(
-        psi_prev: npt.NDArray[complex],
         e: npt.NDArray[complex],
         g: npt.NDArray[complex],
-        w: npt.NDArray[complex],
-        w_prev: npt.NDArray[complex],
+        w_cap: npt.NDArray[complex],
+        w_cap_prev: npt.NDArray[complex],
+        psi_cap_prev: npt.NDArray[complex],
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
-        """Sing
+        """
         See Badeau et al., 2005
         and HrHatrac David et al., 2006
         For reference. Same notations as the first article.
 
         Args:
-            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
             e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
             g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
             w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
             w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
 
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$)
         """
         # Init values of interest from parameters
-        nu = w[-1].T.conj()
+        nu = w_cap[-1].T.conj()
         nu_norm_sq = np.sum(np.abs(nu) ** 2)
-        w_down_prev, w_up_prev = w_prev[:-1], w_prev[1:]
+        w_cap_down_prev, w_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
         e_down, e_up = e[:-1], e[1:]
         # Algorithm given in Table 1
-        e_minus = w_down_prev.T.conj() @ e_up
+        e_minus = w_cap_down_prev.T.conj() @ e_up
         e_plus = w_up_prev.T.conj() @ e_down
         e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
-        psi = psi_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
-        phi_vec = psi.T.conj() @ nu
-        phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
-        return phi_mat, psi
+        psi_cap = psi_cap_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi = psi_cap.T.conj() @ nu
+        phi_cap = psi_cap + (nu @ phi.T.conj()) / (1 - nu_norm_sq)
+        return phi_cap, psi_cap
 
     @staticmethod
     def _step_spectral_matrix_fae(
-        psi_prev: npt.NDArray[complex],
         e: npt.NDArray[complex],
         g: npt.NDArray[complex],
-        w: npt.NDArray[complex],
-        w_prev: npt.NDArray[complex],
-        phi_mat_prev: npt.NDArray[complex],
+        w_cap: npt.NDArray[complex],
+        w_cap_prev: npt.NDArray[complex],
+        psi_cap_prev: npt.NDArray[complex],
+        phi_cap_prev: npt.NDArray[complex],
     ) -> Tuple[
         npt.NDArray[complex],
         npt.NDArray[complex],
@@ -394,49 +394,47 @@ class AdaptiveEsprit:
         For reference. Same notations as the first article.
 
         Args:
-            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
             e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
             g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
             w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
             w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
+            phi_cap_prev (npt.NDArray[complex]): Previous value of the matrix $\Phi$
 
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$, $\bar{a}$, $\bar{b}$)
         """
         # Init values of interest from parameters
-        nu = w[-1].T.conj()
+        nu = w_cap[-1].T.conj()
         nu_norm_sq = np.sum(np.abs(nu) ** 2)
-        w_down_prev, w_up_prev = w_prev[:-1], w_prev[1:]
+        w_cap_down_prev, w_cap_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
         e_down, e_up = e[:-1], e[1:]
         # Algorithm given in Table 1
-        e_minus = w_down_prev.T.conj() @ e_up
-        e_plus = w_up_prev.T.conj() @ e_down
+        e_minus = w_cap_down_prev.T.conj() @ e_up
+        e_plus = w_cap_up_prev.T.conj() @ e_down
         e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
-        psi = psi_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
-        phi_vec = psi.T.conj() @ nu
-        # phi_mat = psi + (nu @ phi_vec.T.conj()) / (1 - nu_norm_sq)
+        psi_cap = psi_cap_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi = psi_cap.T.conj() @ nu
         # Additional stuff
-        nu_prev = w_prev[-1].T.conj()
+        nu_prev = w_cap_prev[-1].T.conj()
         nu_prev_norm_sq = np.sum(np.abs(nu_prev) ** 2)
         e_n = e[-1]
         #
-        phi_vec_prev = psi_prev.conj().H @ nu_prev
-        e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi_vec
-        delta_phi_vec = phi_vec / (1 - nu_norm_sq) - phi_vec_prev / (
-            1 - nu_prev_norm_sq
-        )
+        phi_prev = psi_cap_prev.conj().H @ nu_prev
+        e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi
+        delta_phi = phi / (1 - nu_norm_sq) - phi_prev / (1 - nu_prev_norm_sq)
         #
         a_bar = np.stack((g, e_minus, nu_prev), axis=0)
-        b_bar = np.stack((e_plus_apap, g, delta_phi_vec), axis=0)
-        phi_mat = phi_mat_prev + a_bar @ b_bar.T.conj()
-        return phi_mat, psi, a_bar, b_bar
+        b_bar = np.stack((e_plus_apap, g, delta_phi), axis=0)
+        phi_cap = phi_cap_prev + a_bar @ b_bar.T.conj()
+        return phi_cap, psi_cap, a_bar, b_bar
 
     @staticmethod
-    def _step_eigenvals_fae(
-        g_mat_prev: npt.NDArray[complex],
-        g_ap_mat_prev: npt.NDArray[complex],
-        d_vec_prev: npt.NDArray[complex],
-        phi_mat: npt.NDArray[complex],
+    def _step_eigen_fae(
+        g_cap_prev: npt.NDArray[complex],
+        g_cap_ap_prev: npt.NDArray[complex],
+        d_prev: npt.NDArray[complex],
+        phi_cap: npt.NDArray[complex],
         a_bar: npt.NDArray[complex],
         b_bar: npt.NDArray[complex],
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
@@ -455,25 +453,25 @@ class AdaptiveEsprit:
             Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
         """
         #
-        a_bar_tilde = g_ap_mat_prev.T.conj() @ a_bar
-        b_bar_tilde = g_mat_prev.T.conj() @ b_bar
+        a_bar_tilde = g_cap_ap_prev.T.conj() @ a_bar
+        b_bar_tilde = g_cap_prev.T.conj() @ b_bar
         #
         def phi_bar(z: complex) -> npt.NDArray[complex]:
-            car = 1 / (z - d_vec_prev)
+            car = 1 / (z - d_prev)
             dar = b_bar_tilde.T.conj() @ np.diag(car) @ a_bar_tilde
             # TODO: what is I_bar?? I'm putting the identity for now.
             return np.identity(like=dar) - dar
 
         #
-        g_tilde_mat = None  # TODO
-        g_ap_mat = None  # TODO
-        g_ap_tilde_mat = None  # TODO
+        g_cap_tilde = None  # TODO
+        g_cap_ap = None  # TODO
+        g_cap_tilde_ap = None  # TODO
         #
-        g_mat = g_mat_prev @ g_tilde_mat
-        g_ap_mat = g_ap_mat_prev @ g_ap_tilde_mat
+        g_cap = g_cap_prev @ g_cap_tilde
+        g_cap_ap = g_cap_ap_prev @ g_cap_tilde_ap
         #
-        d_mat = g_ap_mat.T.conj() @ phi_mat @ g_mat
-        return d_mat, g_mat
+        d_cap = g_cap_ap.T.conj() @ phi_cap @ g_cap
+        return d_cap, g_cap
 
 
 class Fapi:
@@ -619,8 +617,8 @@ class Yast:
         cls,
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
-        c_xx_prev: npt.NDArray[complex],
-        c_yy_prev: npt.NDArray[complex],
+        c_cap_xx_prev: npt.NDArray[complex],
+        c_cap_yy_prev: npt.NDArray[complex],
         track_principal: bool,
         beta: float = 0.99,
         nb_it: int = 2,
@@ -645,28 +643,28 @@ class Yast:
         sigma = alg.norm(e, ord=None)
         if np.isclose(sigma, 0):
             # no change from last time
-            return w_cap_prev, c_xx_prev, c_yy_prev
+            return w_cap_prev, c_cap_xx_prev, c_cap_yy_prev
         u = e / sigma
-        x_ap = c_xx_prev @ x
-        y_ap = c_yy_prev @ y
+        x_ap = c_cap_xx_prev @ x
+        y_ap = c_cap_yy_prev @ y
         y_apap = w_cap_prev.T.conj() @ x_ap
         # Added compared to Table 1
-        c_xx = beta * c_xx_prev + x @ x.T.conj()
+        c_cap_xx = beta * c_cap_xx_prev + x @ x.T.conj()
         #
-        c_yy_ap = beta * c_yy_prev + y @ y.T.conj()
+        c_cap_yy_ap = beta * c_cap_yy_prev + y @ y.T.conj()
         z = beta * (y_apap - y_ap) / sigma + sigma * y
         gamma = sigma**2 + (beta / sigma**2) * (
             x.T.conj() @ x_ap - 2 * np.real(y.T.conj() @ y_apap) + y.T.conj() @ y_ap
         )
         # Filling $\bar{C}_{yy}(t)
-        c_yy_bar = np.empty(c_yy_ap.shape + tuple(np.ones(c_yy_ap.ndim)))
-        c_yy_bar[:-1, :-1] = c_yy_ap
+        c_yy_bar = np.empty(c_cap_yy_ap.shape + tuple(np.ones(c_cap_yy_ap.ndim)))
+        c_yy_bar[:-1, :-1] = c_cap_yy_ap
         c_yy_bar[:-1, -1] = z.T.conj()
         c_yy_bar[-1, :-1] = z
         c_yy_bar[-1, -1] = gamma
         #
-        phi_bar, lambd = cls._step_conjugate_gradient(
-            c_yy_ap,
+        phi_var_bar, lambd = cls._step_conjugate_gradient(
+            c_cap_yy_ap,
             c_yy_bar,
             z,
             track_principal=track_principal,
@@ -674,39 +672,39 @@ class Yast:
             thresh=thresh,
         )
         # Decomposition of vector phi_bar
-        phi_small = np.abs(phi_bar[-1])
-        assert phi_small <= 1, "Noooo"
-        theta = phi_bar[-1] / phi_small
-        epsilon = np.sqrt(1 - phi_small**2)
-        phi = phi_bar[:-1] / (theta * epsilon)
+        phi = np.abs(phi_var_bar[-1])
+        assert phi <= 1, "Noooo"
+        theta = phi_var_bar[-1] / phi
+        epsilon = np.sqrt(1 - phi**2)
+        phi_var = phi_var_bar[:-1] / (theta * epsilon)
         #
-        e_1 = np.zeros_like(phi)
+        e_1 = np.zeros_like(phi_var)
         e_1[0] = 1
-        e_1 = -np.exp(1j * np.angle(phi[0])) * e_1
+        e_1 = -np.exp(1j * np.angle(phi_var[0])) * e_1
         #
-        a = (phi - e_1) / alg.norm(phi - e_1, ord=None)
+        a = (phi_var - e_1) / alg.norm(phi_var - e_1, ord=None)
         b = w_cap_prev @ a
-        q = w_cap_prev - 2 * b @ a.T.conj() - epsilon * u @ e_1.T.conj()
-        q_1 = q[:, 0]
-        d_vec = np.ones_like(phi)
-        d_vec[0] = 1 / alg.norm(q_1, ord=None)
-        d_mat = np.diag(d_vec)
-        w = q @ d_mat
+        q_cap = w_cap_prev - 2 * b @ a.T.conj() - epsilon * u @ e_1.T.conj()
+        q_1 = q_cap[:, 0]
+        d = np.ones_like(phi_var)
+        d[0] = 1 / alg.norm(q_1, ord=None)
+        d_cap = np.diag(d)
+        w_cap = q_cap @ d_cap
         #
-        c_yy_ap_a = c_yy_ap @ a
-        a_ap = 4 * (c_yy_ap_a - (a.T.conj() @ c_yy_ap_a) @ a)
+        c_cap_yy_ap_a = c_cap_yy_ap @ a
+        a_ap = 4 * (c_cap_yy_ap_a - (a.T.conj() @ c_cap_yy_ap_a) @ a)
         z_ap = 2 * z - 4 * (a.T.conj() @ z) @ a - epsilon * gamma * e_1
         #
-        c_yy_apap = c_yy_ap - a_ap @ a.T.conj() - epsilon * z_ap @ e_1.T.conj()
-        c_yy_apap = (c_yy_apap + c_yy_apap.T.conj()) / 2
+        c_cap_yy_apap = c_cap_yy_ap - a_ap @ a.T.conj() - epsilon * z_ap @ e_1.T.conj()
+        c_cap_yy_apap = (c_cap_yy_apap + c_cap_yy_apap.T.conj()) / 2
         #
-        c_yy = d_mat @ c_yy_apap @ d_mat
-        return w, c_xx, c_yy
+        c_cap_yy = d_cap @ c_cap_yy_apap @ d_cap
+        return w_cap, c_cap_xx, c_cap_yy
 
     @staticmethod
     def _step_conjugate_gradient(
-        c_yy_ap: npt.NDArray[complex],
-        c_yy_bar: npt.NDArray[complex],
+        c_cap_yy_ap: npt.NDArray[complex],
+        c_cap_yy_bar: npt.NDArray[complex],
         z: npt.NDArray[complex],
         track_principal: bool,
         nb_it: int = 1,
@@ -720,54 +718,54 @@ class Yast:
         if nb_it is None and thresh is None:
             thresh = 0.01
         g = z / alg.norm(z, ord=None)
-        p = c_yy_ap @ g - (g.T.conj() @ c_yy_ap @ g) @ g
+        p = c_cap_yy_ap @ g - (g.T.conj() @ c_cap_yy_ap @ g) @ g
         #
-        s = np.stack((np.zeros_like(g), p / alg.norm(p, ord=None), g), axis=1)
-        s = np.concatenate((s, [1, 0, 0]), axis=0)
+        s_cap = np.stack((np.zeros_like(g), p / alg.norm(p, ord=None), g), axis=1)
+        s_cap = np.concatenate((s_cap, [1, 0, 0]), axis=0)
         #
-        c_ys_bar = c_yy_bar @ s
-        c_ss = s.T.conj() @ c_ys_bar
-        print(c_ss.shape)
-        assert c_ss.shape == (3, 3)
+        c_cap_ys_bar = c_cap_yy_bar @ s_cap
+        c_cap_ss = s_cap.T.conj() @ c_cap_ys_bar
+        print(c_cap_ss.shape)
+        assert c_cap_ss.shape == (3, 3)
         k = 0
-        delta_j = np.inf
+        delta_j_cap = np.inf
         lambd = None
-        theta_vec = None
+        theta = None
         while (k is None or k < nb_it) and (
-            thresh is None or alg.norm(delta_j) > thresh
+            thresh is None or alg.norm(delta_j_cap) > thresh
         ):
-            w, vr = alg.eig(c_ss, left=False, right=True)
+            w, vr = alg.eig(c_cap_ss, left=False, right=True)
             w_norm = arg.norm(w)
             idx_extr = np.argmax(w_norm) if track_principal else np.argmin(w_norm)
-            theta_vec = w[idx_extr]
+            theta = w[idx_extr]
             lambd = vr[idx_extr]
             #
-            theta_round = np.asarray(
+            theta_var = np.asarray(
                 [
-                    -alg.norm([theta_vec[1], theta_vec[2]], ord=2),
-                    theta_vec[0].conj()
-                    * (theta_vec[1] / np.abs(theta_vec[1]))
-                    / np.sqrt(1 + np.abs(theta_vec[2] / theta_vec[1]) ** 2),
-                    theta_vec[0].conj()
-                    * (theta_vec[2] / np.abs(theta_vec[2]))
-                    / np.sqrt(1 + np.abs(theta_vec[1] / theta_vec[2]) ** 2),
+                    -alg.norm([theta[1], theta[2]], ord=2),
+                    theta[0].conj()
+                    * (theta[1] / np.abs(theta[1]))
+                    / np.sqrt(1 + np.abs(theta[2] / theta[1]) ** 2),
+                    theta[0].conj()
+                    * (theta[2] / np.abs(theta[2]))
+                    / np.sqrt(1 + np.abs(theta[1] / theta[2]) ** 2),
                 ]
             )
-            theta_mat = np.stack((theta_vec, theta_round), axis=1)
-            s[:, :2] = s @ theta_mat
-            c_ys_bar[:, :2] = c_ys_bar @ theta_mat
-            c_ss[:2, :2] = theta_mat.T.conj() @ c_ss @ theta_mat
-            delta_j = 2 * (c_ys_bar[:, 0] - lambd * s[:, 1])
+            theta_cap = np.stack((theta, theta_var), axis=1)
+            s_cap[:, :2] = s_cap @ theta_cap
+            c_cap_ys_bar[:, :2] = c_cap_ys_bar @ theta_cap
+            c_cap_ss[:2, :2] = theta_cap.T.conj() @ c_cap_ss @ theta_cap
+            delta_j_cap = 2 * (c_cap_ys_bar[:, 0] - lambd * s_cap[:, 1])
             #
-            g = delta_j / alg.norm(delta_j)
-            g = g - s[:, :2] @ (s_[:, :2].T.conj() @ g)
+            g = delta_j_cap / alg.norm(delta_j_cap)
+            g = g - s_cap[:, :2] @ (s_[:, :2].T.conj() @ g)
             g = g / alg.norm(g)
             #
-            s[:, 2] = g
-            c_ys_bar[:, 2] = c_yy_bar @ s[:, 2]
-            c_ss[:, 2] = s.T.conj() @ c_ys_var[:, 2]
-            c_ss[2, :] = c_ss[:, 3].T.conj()
-        phi_bar = s[:, 0]
+            s_cap[:, 2] = g
+            c_cap_ys_bar[:, 2] = c_cap_yy_bar @ s_cap[:, 2]
+            c_cap_ss[:, 2] = s_cap.T.conj() @ c_ys_var[:, 2]
+            c_cap_ss[2, :] = c_cap_ss[:, 3].T.conj()
+        phi_bar = s_cap[:, 0]
         return phi_bar, lambd
 
 
@@ -809,7 +807,7 @@ class Ester:
         ksi_cap = [np.zeros((n - 1, p), dtype=w_cap[0].dtype) for p in range(p_max + 1)]
         phi = [np.zeros(p, dtype=w_cap[0].dtype) for p in range(p_max + 1)]
         # norm(e[p]) is always in [0, 1], see original paper
-        e = [np.empty((p, p), dtype=w_cap[0].dtype) for p in range(p_max + 1)]
+        e_cap = [np.empty((p, p), dtype=w_cap[0].dtype) for p in range(p_max + 1)]
         for p in range(1, p_max + 1):
             # Recursive computation of e[p]
             # see Badeau et al. (2006) Table 1 for details on the algorithm
@@ -831,12 +829,12 @@ class Ester:
             phi[p][:-1] = phi[p - 1] + mu_p * psi_l[p]
             phi[p][-1] = psi_r[p].T.conj() @ nu[p - 1] + mu_p * psi_lr[p].conj()
             w_cap_down_p = w_cap[p][:-1]
-            e[p] = ksi_cap[p] - 1 / (1 - np.sum(np.abs(nu[p]) ** 2)) * np.outer(
+            e_cap[p] = ksi_cap[p] - 1 / (1 - np.sum(np.abs(nu[p]) ** 2)) * np.outer(
                 w_cap_down_p @ nu[p], phi[p].T.conj()
             )
         # discard p=0 case (meaningless)
-        e = e[1:]
-        return e
+        e_cap = e_cap[1:]
+        return e_cap
 
     @classmethod
     def inverse_error_func(
@@ -852,9 +850,9 @@ class Ester:
         Returns:
             npt.NDArray[float]: [description]
         """
-        e = cls.error(x, n, p_max)
-        j = np.asarray([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
-        return j
+        e_cap = cls.error(x, n, p_max)
+        j_cap = np.asarray([1 / alg.norm(e_cap[p], ord=None) ** 2 for p in range(len(e_cap))])
+        return j_cap
 
     @classmethod
     def estimate_esm_ordre(
@@ -878,16 +876,35 @@ class Ester:
         Returns:
             npt.NDArray[float]: [description]
         """
-        j = cls.inverse_error_func(x, n, p_max)
-        j_max = np.amax(j)
+        j_cap = cls.inverse_error_func(x, n, p_max)
+        j_max = np.amax(j_cap)
         # first select peaks in signal
-        j_max_thres_ids, _ = sig.find_peaks(j, height=j_max * thresh_ratio)
+        j_max_thres_ids, _ = sig.find_peaks(j_cap, height=j_max * thresh_ratio)
         # then filter peaks under threshold
-        j_max_ids = sig.argrelextrema(j, np.greater_equal, order=1, mode="clip")[0]
-        j_max_thres_ids = j_max_ids[np.nonzero(j[j_max_ids] >= j_max * thresh_ratio)[0]]
+        j_max_ids = sig.argrelextrema(j_cap, np.greater_equal, order=1, mode="clip")[0]
+        j_max_thres_ids = j_max_ids[np.nonzero(j_cap[j_max_ids] >= j_max * thresh_ratio)[0]]
         # first index corresponds to p=1, second to p=2 etc.
         r = np.amax(j_max_thres_ids) + 1
         return r
+
+
+class AdaptiveEsprit:
+    """Centralised methods used in the Adaptive ESPRIT framework."""
+
+    @classmethod
+    def _step(
+        x: npt.NDArray[float],
+        w_cap_prev: npt.NDArray[complex],
+        z_cap_prev: npt.NDArray[complex],
+        x_cap_prev: npt.NDArray[float],
+        v_cap_hat_prev: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], ...]:
+        w_cap, z_cap, x_cap, v_cap_hat, e, g = Fapi._step_spectral_weights_sw_fapi(
+            x, w_cap_prev, z_cap_prev, x_cap_prev, v_cap_hat_prev
+        )
+        phi_cap, psi_cap = AdaptiveSpectralMatrixTracking._step_spectral_matrix(
+            e, g, w_cap, w_cap_prev, psi_cap_prev
+        )
 
 
 class FiltreBank:
