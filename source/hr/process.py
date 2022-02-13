@@ -482,8 +482,8 @@ class Fapi:
     @staticmethod
     def _step_spectral_weights_fapi(
         x: npt.NDArray[float],
-        w_prev: npt.NDArray[complex],
-        z_prev: npt.NDArray[float],
+        w_cap_prev: npt.NDArray[complex],
+        z_cap_prev: npt.NDArray[float],
         beta: float = 0.99,
     ) -> Tuple[
         npt.NDArray[complex],
@@ -502,8 +502,8 @@ class Fapi:
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex]]: [description]
         """
-        y = w_prev.T.conj() @ x
-        h = z_prev @ y
+        y = w_cap_prev.T.conj() @ x
+        h = z_cap_prev @ y
         g = h / (beta + y.T.conj() @ h)
         # $\epsilon^2$ in the article
         diff_sq = np.sum(np.abs(x) ** 2 - np.abs(y) ** 2)
@@ -511,20 +511,20 @@ class Fapi:
         tau = diff_sq / (1 + diff_sq * g + np.sqrt(1 + diff_sq * g_norm_sq))
         eta = 1 - tau * g_norm_sq
         y_ap = eta * y + tau * g
-        h_ap = z_prev.T.conj() @ y_ap
-        epsilon_vec = (tau / eta) * (z_prev @ g - (h_ap.T.conj() @ g) * g)
-        z = (1 / beta) * (z_prev - g @ h_ap.T.conj() + epsilon_vec @ g.T.conj())
-        e_ap = eta * x - w_prev @ y_ap
-        w = w_prev + e_ap @ g.T.conj()
+        h_ap = z_cap_prev.T.conj() @ y_ap
+        epsilon_vec = (tau / eta) * (z_cap_prev @ g - (h_ap.T.conj() @ g) * g)
+        z = (1 / beta) * (z_cap_prev - g @ h_ap.T.conj() + epsilon_vec @ g.T.conj())
+        e_ap = eta * x - w_cap_prev @ y_ap
+        w = w_cap_prev + e_ap @ g.T.conj()
         return w, z, e_ap, g
 
     @staticmethod
     def _step_spectral_weights_sw_fapi(
-        x_vec: npt.NDArray[float],
-        w_mat_prev: npt.NDArray[complex],
-        z_mat_prev: npt.NDArray[float],
-        x_mat_prev: npt.NDArray[float],
-        v_mat_hat_prev: npt.NDArray[float],
+        x: npt.NDArray[float],
+        w_cap_prev: npt.NDArray[complex],
+        z_cap_prev: npt.NDArray[float],
+        x_cap_prev: npt.NDArray[float],
+        v_cap_hat_prev: npt.NDArray[float],
         beta: float = 0.99,
     ) -> Tuple[
         npt.NDArray[complex],
@@ -553,70 +553,62 @@ class Fapi:
         # this?: https://stackoverflow.com/a/66160829
         # don't think so..
         # some additional definitions
-        l = x_mat_prev.shape[-1]
-        r = w_mat_prev.shape[-1]
+        l = x_cap_prev.shape[-1]
+        r = w_cap_prev.shape[-1]
         # Rank of the update involved in equation (4)
         # p = 2 in the truncated window case.
         p = 2
-        j_mat_bar = np.asarray([1, 0], [0, -(beta**l)])
+        j_cap_bar = np.asarray([1, 0], [0, -(beta**l)])
         # Section similar to SW - PAST
         # Update the $x(t)$ vector
-        x_vec_prev_l = x_mat_prev[:, 0]
+        x_prev_l = x_cap_prev[:, 0]
         # n x p matrix
-        x_vec_bar = np.stack((x_vec, x_vec_prev_l), axis=1)
+        x_bar = np.stack((x, x_prev_l), axis=1)
         # and the $X(t)$ matrix
-        x_mat = np.roll(x_mat_prev, shift=-1, axis=1)
-        x_mat[:, -1] = x_vec
+        x_cap = np.roll(x_cap_prev, shift=-1, axis=1)
+        x_cap[:, -1] = x
         # Update the $y(t)$ and $\hat{v}(t-l)$ vectors
         # n x p matrix
-        y_vec = w_mat_prev.T.conj() @ x_vec
-        v_vec_hat_prev_l = v_mat_hat_prev[:, 0]
+        y = w_cap_prev.T.conj() @ x
+        v_hat_prev_l = v_cap_hat_prev[:, 0]
         # and the $\hat{Y}(t)$ matrix
-        y_mat_hat = np.roll(v_mat_hat_prev, shift=-1, axis=1)
-        y_mat_hat[:, -1] = y_vec
-        v_vec_prev_l = w_mat_prev.T.conj() @ x_vec_prev_l
+        y_cap_hat = np.roll(v_cap_hat_prev, shift=-1, axis=1)
+        y_cap_hat[:, -1] = y
+        v_prev_l = w_cap_prev.T.conj() @ x_prev_l
         #
-        # a
-        y_vec_bar_hat = np.stack((y_vec, v_vec_hat_prev_l), axis=1)
-        y_vec_bar = np.stack((y_vec, v_vec_prev_l), axis=1)
+        # a n x p matrix actually
+        y_bar_hat = np.stack((y, v_hat_prev_l), axis=1)
+        y_bar = np.stack((y, v_prev_l), axis=1)
         # an r x p matrix
-        h_mat_bar = z_mat_prev @ y_vec_bar_hat
+        h_bar = z_cap_prev @ y_bar_hat
         # an r x p matrix
-        g_mat_bar = h_mat_bar @ alg.inv(
-            beta * alg.inv(j_mat_bar) + y_vec_bar.T.conj() @ h
-        )
+        g_bar = h_bar @ alg.inv(beta * alg.inv(j_cap_bar) + y_bar.T.conj() @ h)
         # TW - API main section
-        espilon_mat_bar = np.power(
-            x_vec_bar.T.conj() @ x_vec_bar - y_vec_bar.T.conj() @ y_vec_bar, 0.5
-        )  # TODO Not right
-        rho_mat_bar = (
+        epsilon_var_bar = alg.sqrtm(x_bar.T.conj() @ x_bar - y_bar.T.conj() @ y_bar)
+        rho_bar = (
             np.identity(p)
-            + epsilon_mat_bar.T.conj()
-            @ (g_mat_bar.T.conj() @ g_mat_bar)
-            @ epsilon_mat_bar
+            + epsilon_mat_bar.T.conj() @ (g_bar.T.conj() @ g_bar) @ epsilon_mat_bar
         )
-        # TODO
+        # p x p positive definite matrix
         tau_mat_bar = (
-            espilon_mat_bar
-            @ alg.inv(rho_mat_bar + np.power(rho_mat, 0.5).T.conj())
-            @ espilon_mat_bar.T.conj()
+            epsilon_var_bar
+            @ alg.inv(rho_bar + alg.sqrtm(rho_mat).T.conj())
+            @ epsilon_var_bar.T.conj()
         )
-        eta_mat_bar = np.identity(p) - (g_mat_bar.T.conj() @ g_mat_bar) @ tau_mat_bar
-        y_vec_bar_ap = y_vec_bar @ eta_mat_bar + g_mat_bar @ tau_mat_bar
-        h_vec_bar_ap = z_mat_prev.T.conj() @ y_vec_bar_ap
-        epsilon_var_mat_bar = (
-            z_mat_prev @ g_mat_bar - g_mat_bar @ (h_vec_bar_ap.T.conj() @ g_mat_bar)
-        ) @ (tau_mat_bar @ np.inv(eta_mat_bar)).T.conj()
+        eta_mat_bar = np.identity(p) - (g_bar.T.conj() @ g_bar) @ tau_mat_bar
+        y_bar_ap = y_bar @ eta_mat_bar + g_bar @ tau_mat_bar
+        h_bar_ap = z_cap_prev.T.conj() @ y_bar_ap
+        epsilon_bar = (z_cap_prev @ g_bar - g_bar @ (h_bar_ap.T.conj() @ g_bar)) @ (
+            tau_mat_bar @ np.inv(eta_mat_bar)
+        ).T.conj()
         z_mat = (1 / beta) * (
-            z_mat_prev
-            - g_mat_bar @ h_vec_bar_ap.T.conj()
-            + epsilon_var_mat_bar @ g_mat_bar.T.conj()
+            z_cap_prev - g_bar @ h_bar_ap.T.conj() + epsilon_bar @ g_bar.T.conj()
         )
         # an n x p matrix
-        e_mat_bar_ap = x_vec_bar @ eta_vec_bar - w_mat_prev @ y_vec_bar_ap
-        w_mat = w_mat_prev + e_mat_bar_ap @ g_mat_bar.T.conj()
-        v_mat_hat = y_mat - g_mat_bar(g_mat_bar @ tau_mat_bar).T.conj() @ y_mat
-        return w_mat, z_mat, x_mat, v_mat_hat, e_mat_bar, g_mat_bar
+        e_mat_bar_ap = x_bar @ eta_bar - w_cap_prev @ y_bar_ap
+        w_mat = w_cap_prev + e_mat_bar_ap @ g_bar.T.conj()
+        v_mat_hat = y_mat - g_bar(g_bar @ tau_mat_bar).T.conj() @ y_mat
+        return w_mat, z_mat, x_cap, v_mat_hat, e_mat_bar, g_bar
 
 
 class Yast:
@@ -626,7 +618,7 @@ class Yast:
     def step_spectral_weights(
         cls,
         x: npt.NDArray[float],
-        w_prev: npt.NDArray[complex],
+        w_cap_prev: npt.NDArray[complex],
         c_xx_prev: npt.NDArray[complex],
         c_yy_prev: npt.NDArray[complex],
         track_principal: bool,
@@ -648,16 +640,16 @@ class Yast:
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($W(t)$, $C_{xx}(t)$, $C_{yy}(t)$)
         """
-        y = w_prev.T.conj() @ x
-        e = x - w_prev @ y
+        y = w_cap_prev.T.conj() @ x
+        e = x - w_cap_prev @ y
         sigma = alg.norm(e, ord=None)
         if np.isclose(sigma, 0):
             # no change from last time
-            return w_prev, c_xx_prev, c_yy_prev
+            return w_cap_prev, c_xx_prev, c_yy_prev
         u = e / sigma
         x_ap = c_xx_prev @ x
         y_ap = c_yy_prev @ y
-        y_apap = w_prev.T.conj() @ x_ap
+        y_apap = w_cap_prev.T.conj() @ x_ap
         # Added compared to Table 1
         c_xx = beta * c_xx_prev + x @ x.T.conj()
         #
@@ -693,8 +685,8 @@ class Yast:
         e_1 = -np.exp(1j * np.angle(phi[0])) * e_1
         #
         a = (phi - e_1) / alg.norm(phi - e_1, ord=None)
-        b = w_prev @ a
-        q = w_prev - 2 * b @ a.T.conj() - epsilon * u @ e_1.T.conj()
+        b = w_cap_prev @ a
+        q = w_cap_prev - 2 * b @ a.T.conj() - epsilon * u @ e_1.T.conj()
         q_1 = q[:, 0]
         d_vec = np.ones_like(phi)
         d_vec[0] = 1 / alg.norm(q_1, ord=None)
