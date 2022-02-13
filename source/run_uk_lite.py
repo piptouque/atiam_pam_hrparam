@@ -9,6 +9,7 @@ from typing import Callable, Union, Tuple, List
 from abc import abstractmethod, abstractproperty
 
 import pandas as pd
+import pickle
 import json
 import argparse
 import matplotlib.pyplot as plt
@@ -98,28 +99,32 @@ if __name__ == "__main__":
     force_n = np.zeros((np.sum(num_modes), 1), dtype=float)
 
     # Initialize files
-    file_q_n_path = output_spreadsheet_path / 'q_n.csv'
-    file_dq_n_path = output_spreadsheet_path / 'dq_n.csv'
-    file_ddq_n_path = output_spreadsheet_path / 'ddq_n.csv'
-    file_force_n_t_path = output_spreadsheet_path / 'force_n_t.csv'
+    file_q_n_path = output_spreadsheet_path / 'q_n.pkl'
+    file_dq_n_path = output_spreadsheet_path / 'dq_n.pkl'
+    file_ddq_n_path = output_spreadsheet_path / 'ddq_n.pkl'
+    file_force_n_t_path = output_spreadsheet_path / 'force_n_t.pkl'
 
-    f_q_n = open(file_q_n_path, 'w')
-    f_dq_n = open(file_dq_n_path, 'w')
-    f_ddq_n = open(file_ddq_n_path, 'w')
-    f_force_n = open(file_force_n_t_path, 'w')
-    FIRST_LINE = 't,'+','.join([f"{n}" for n in sim.n[0]]) + '\n'
-    f_q_n.write(FIRST_LINE)
-    f_dq_n.write(FIRST_LINE)
-    f_ddq_n.write(FIRST_LINE)
-    f_force_n.write(FIRST_LINE)
-    f_q_n.write('0,')
-    q_n[:num_modes[0]].tofile(f_q_n, sep=",")
-    f_dq_n.write('0,')
-    f_ddq_n.write('0,')
-    f_force_n.write('0,')
-    dq_n[:num_modes[0]].tofile(f_dq_n, sep=",")
-    ddq_n[:num_modes[0]].tofile(f_ddq_n, sep=",")
-    force_n[:num_modes[0]].tofile(f_force_n, sep=",")
+    f_q_n = open(file_q_n_path, 'wb')
+    f_dq_n = open(file_dq_n_path, 'wb')
+    f_ddq_n = open(file_ddq_n_path, 'wb')
+    f_force_n = open(file_force_n_t_path, 'wb')
+    # FIRST_LINE = 't,'+','.join([f"{n}" for n in sim.n[0]]) + '\n'
+    # f_q_n.write(FIRST_LINE)
+    # f_dq_n.write(FIRST_LINE)
+    # f_ddq_n.write(FIRST_LINE)
+    # f_force_n.write(FIRST_LINE)
+    # f_q_n.write('0,')
+    # q_n[:num_modes[0]].tofile(f_q_n, sep=",")
+    # f_dq_n.write('0,')
+    # f_ddq_n.write('0,')
+    # f_force_n.write('0,')
+    # dq_n[:num_modes[0]].tofile(f_dq_n, sep=",")
+    # ddq_n[:num_modes[0]].tofile(f_ddq_n, sep=",")
+    # force_n[:num_modes[0]].tofile(f_force_n, sep=",")
+    pickle.dump((0, q_n), f_q_n)
+    pickle.dump((0, dq_n), f_dq_n)
+    pickle.dump((0, ddq_n), f_ddq_n)
+    pickle.dump((0, force_n), f_force_n)
     # Run the simulation / solve the system.
     ext_force_n = string.ext_force_n(ext_force_string, sim.n[0])
     ext_force_n = np.hstack((ext_force_n, ext_force_body))
@@ -130,17 +135,33 @@ if __name__ == "__main__":
         q_n, dq_n, ddq_n, force_n = sim.step(q_n, dq_n, ddq_n, force_n,
                                              c_n, k_n, m_n, m_halfinv_mat,
                                              a_mat, b_plus_mat, w_mat)
-        f_q_n.write(f"\n{t},")
-        q_n[:num_modes[0]].tofile(f_q_n, sep=',')
-        f_dq_n.write(f"\n{t},")
-        dq_n[:num_modes[0]].tofile(f_dq_n, sep=',')
-        f_ddq_n.write(f"\n{t},")
-        ddq_n[:num_modes[0]].tofile(f_ddq_n, sep=',')
-        f_force_n.write(f"\n{t},")
-        force_n[:num_modes[0]].tofile(f_force_n, sep=',')
+        pickle.dump((t, q_n), f_q_n)
+        pickle.dump((t, dq_n), f_dq_n)
+        pickle.dump((t, ddq_n), f_ddq_n)
+        pickle.dump((t, force_n), f_force_n)
+        # f_q_n.write(f"\n{t},")
+        # q_n[:num_modes[0]].tofile(f_q_n, sep=',')
+        # f_dq_n.write(f"\n{t},")
+        # dq_n[:num_modes[0]].tofile(f_dq_n, sep=',')
+        # f_ddq_n.write(f"\n{t},")
+        # ddq_n[:num_modes[0]].tofile(f_ddq_n, sep=',')
+        # f_force_n.write(f"\n{t},")
+        # force_n[:num_modes[0]].tofile(f_force_n, sep=',')
 
     # close files
     f_q_n.close()
     f_dq_n.close()
     f_ddq_n.close()
     f_force_n.close()
+
+    # save config files
+    with open(output_path / 'string.pkl', 'wb') as f_string:
+        pickle.dump(f_string, string)
+    with open(output_path / 'body.pkl', 'wb') as f_body:
+        pickle.dump(f_body, body)
+    with open(output_path / 'excitation.pkl', 'wb') as f_excitation:
+        pickle.dump(f_excitation, ext_force_string)
+    with open(output_path / 'sim.pkl', 'wb') as f_sim:
+        pickle.dump(f_sim, sim)
+
+
