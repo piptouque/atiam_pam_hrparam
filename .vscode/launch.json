@@ -24,6 +24,23 @@
                 "--out_dir",
                 "${cwd}/out/uk/"
             ]
+        },
+        {
+            "name": "Test: Experimental Data",
+            "type": "python",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "program": "${cwd}/source/run_expr.py",
+            "args": [
+                "--data_dir",
+                "${cwd}/data/expr/",
+                "--log",
+                "${cwd}/source/config/expr/log_config.json",
+                "--config",
+                "${cwd}/source/config/expr/analysis_config.json",
+                "--out_dir",
+                "${cwd}/out/expr/"
+            ]
         }
     ]
 }

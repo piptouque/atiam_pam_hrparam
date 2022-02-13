@@ -1,0 +1,16 @@
+{
+    "do_save": true,
+    "do_log": false,
+    "plot": {
+        "focus": {
+            "time": {
+                "center": "win",
+                "ratio": 2
+            },
+            "freq": [
+                20,
+                1200
+            ]
+        }
+    }
+}
