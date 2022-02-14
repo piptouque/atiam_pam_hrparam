@@ -1,77 +1,16 @@
+from typing import Tuple, List, Union
+
 import scipy.linalg as alg
 import scipy.signal as sig
 import scipy.ndimage as img
 import numpy as np
+
+rng = np.random.default_rng(123)
 import numpy.typing as npt
 
-from typing import Tuple, List, Union
 
-from hr.esm import EsmModel
-
-
-class EsmSubspaceDecomposer:
-    """[summary]"""
-
-    def __init__(
-        self,
-        fs: float,
-        n_esprit: int,
-        p_max_ester: int,
-        n_fft_noise: int,
-        smoothing_factor_noise: float = 1,
-        quantile_ratio_noise: float = 1 / 3,
-        ar_ordre_noise: int = 10,
-        thresh_ratio_ester: float = 0.1,
-    ) -> None:
-
-        self.fs = fs
-        self.n_fft_noise = n_fft_noise
-        #
-        self.n_esprit = n_esprit
-        #
-        self.smoothing_factor_noise = smoothing_factor_noise
-        self.quantile_ratio_noise = quantile_ratio_noise
-        self.ar_ordre_noise = ar_ordre_noise
-        #
-        self.p_max_ester = p_max_ester
-        self.thresh_ratio_ester = thresh_ratio_ester
-
-    def perform(
-        self, x: npt.NDArray[complex]
-    ) -> Tuple[
-        EsmModel, npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]
-    ]:
-        """[summary]
-
-        Args:
-            n (int): [description]
-            p_max (int): [description]
-            n_fft (int): [description]
-        """
-
-        # 1. Whiten the noise
-        x_white = NoiseWhitening.whiten(
-            x,
-            self.n_fft_noise,
-            fs=self.fs,
-            ar_ordre=self.ar_ordre_noise,
-            quantile_ratio=self.quantile_ratio_noise,
-            smoothing_factor=self.smoothing_factor_noise,
-        )
-
-        # 2. Estimate the ESM model ordre on the whitened signal
-        # because ESTER does work quite as well with the whitened signal
-        r = Ester.estimate_esm_ordre(
-            x_white,
-            self.n_esprit,
-            self.p_max_ester,
-            thresh_ratio=self.thresh_ratio_ester,
-        )
-
-        # 3. Apply ESPRIT on the whitened signal
-        # and estimate the ESM model parameters
-        x_esm, w, w_per = Esprit.estimate_esm(x_white, self.n_esprit, r)
-        return x_esm, w, w_per, x_white
+from source.hr.esm import EsmModel, AdaptiveEsmModel
+from source.hr.preprocess import NoiseWhitening, FiltreBank
 
 
 class Esprit:
@@ -94,22 +33,22 @@ class Esprit:
 
     @classmethod
     def subspace_weighting_mats(
-        cls, x: npt.NDArray[complex], n: int, k: int
+        cls, x: npt.NDArray[complex], n: int, r: int
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """Gets W and W_per the subspace weighting matrices used in ESPRIT algorithm
 
         Args:
             x (npt.NDArray[complex]): [description]
             n (int): [description]
-            k (int): [description]
+            r (int): [description]
 
         Returns:
-            Tuple[npt.NDArray[complex], npt.NDArray[float]]: (n,k) and (n,n-k) W and W_per matrices
+            Tuple[npt.NDArray[complex], npt.NDArray[float]]: (n,r) and (n,n-r) W and W_per matrices
         """
         r_xx = cls._correlation_mat(x, n)
         u_1, _, _ = alg.svd(r_xx)
-        w_cap = u_1[:, :k]
-        w_cap_per = u_1[:, k:]
+        w_cap = u_1[:, :r]
+        w_cap_per = u_1[:, r:]
         return w_cap, w_cap_per
 
     @classmethod
@@ -146,11 +85,13 @@ class Esprit:
         return zs
 
     @classmethod
-    def estimate_esm_params(
+    def estimate_esm_alphas(
         cls,
         x: npt.NDArray[float],
         zs: npt.NDArray[complex],
-    ) -> Tuple[npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]]:
+    ) -> Tuple[
+        npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]
+    ]:
         """Estimates the normalised frequencies and normalised damping factors,
         amplitude and initial phase
         for the ESM model using the ESPRIT algorithm.
@@ -162,201 +103,47 @@ class Esprit:
             Tuple[npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings, estimated real amplitudes, estimated initial phases)
         """
         log_zs = np.log(zs)
-        # DAMPING RATIOS AND FREQUENCIES
-        # no damping should ever be negative.
-        # fix: just discard those that are.
-        gammas = -np.minimum(0, np.real(log_zs))  # damping factors
-        nus = np.imag(log_zs) / (2 * np.pi)  # frequencies
-        # REAL AMPLITUDES AND INITIAL PHASES
         # signal's length
-        n_s = len(x)  
+        n_s = len(x)
         ts = np.arange(n_s)  # array of discrete times
         # Vandermonde matrix of dimension N
         v_mat = np.exp(np.outer(ts, log_zs))
         alphas = alg.pinv(v_mat) @ x
-        amps = np.abs(alphas)
-        phis = np.angle(alphas)
-        return gammas, nus, amps, phis
+        return alphas
 
     @classmethod
     def estimate_esm(
-        cls, x: npt.NDArray[float], n: int, k: int
+        cls, x: npt.NDArray[float], n: int, r: int
     ) -> Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]:
         """Estimates the complete ESM model using the ESPRIT algorithm.
 
         Args:
             x (np.ndarray): input signal
             n (int): number of lines in the Hankel matrix S
-            k (int): number of searched sinusoids
+            r (int): number of searched sinusoids
 
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        w_cap, w_cap_per = cls.subspace_weighting_mats(x, n, k)
+        w_cap, w_cap_per = cls.subspace_weighting_mats(x, n, r)
         phi_cap = cls.spectral_matrix(w_cap)
         zs = cls.estimate_poles(phi_cap)
-        gammas, nus, amps, phis = cls.estimate_esm_params(x, zs)
-
-        esm = EsmModel(gammas=gammas, nus=nus, amps=amps, phis=phis)
+        alphas = cls.estimate_esm_alphas(x, zs)
+        #
+        esm = EsmModel.from_complex(zs, alphas)
 
         return (esm, w_cap, w_cap_per)
 
 
-class NoiseWhitening:
-    """[summary]"""
+class MiscAdaptiveTracking:
+    """Some stuff from
+    Badeau et al., 2005,
+    and David et al., 2006
+    and David et al., 2007
+    """
 
     @staticmethod
-    def _estimate_noise_psd(
-        x_psd: npt.NDArray[complex], quantile_ratio: float, nu_width: float
-    ) -> npt.NDArray[complex]:
-        """Estimates the noise's PSD with a median filter (smoothing the signal's PSD)
-        Args:
-            x_psd (npt.NDArray[complex]): [description]
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            nu_width (float): Width ratio for the rank filtre, in normalised frequency (in [0, 1]).
-
-        Returns:
-            npt.NDArray[complex]: Estimated PSD of the noise.
-        """
-        n_fft = x_psd.shape[-1]
-        size = int(np.round(nu_width * n_fft))
-        # choose rank in function of the chosen quantile
-        rank = int(np.round(quantile_ratio * size))
-        noise_psd = img.rank_filter(x_psd, rank=rank, size=size)
-        return noise_psd
-
-    @classmethod
-    def estimate_noise_psd(
-        cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        quantile_ratio: float = 1 / 3,
-        smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
-        """Estimates the noise's PSD from a temporal signal.
-
-        Args:
-            x (npt.NDArray[complex]): [description]
-            n_fft (int): Number of frequency bins
-            fs (float): Sampling rate
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
-
-        Returns:
-            npt.NDArray[complex]: [description]
-        """
-        # x: the input signal FOR EACH FREQUENCY BAND
-        # smoothing_ordre: at least two times the length of the PSD's principal lobe (can be done visually)
-        # AR_ordre: ~ 10
-        # note: no need to give it the correct sample frequency,
-        # since it is only used to return the fftfreqs.
-        win_name = "hann"
-        m = n_fft // 2
-        win_width_norm = 2  # for a Hann window
-        win_width = win_width_norm / m
-        # At least twice the bandwidth of the window used in the PSD computation!
-        nu_width = smoothing_factor * 2 * win_width
-        # print(f"width={nu_width * fs} Hz, {nu_width * n_fft} samples")
-        _, x_psd = sig.welch(
-            x, fs=fs, nfft=n_fft, window=win_name, nperseg=m, return_onesided=False
-        )
-
-        # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
-        noise_psd = cls._estimate_noise_psd(
-            x_psd, quantile_ratio=quantile_ratio, nu_width=nu_width
-        )
-        return noise_psd
-
-    @classmethod
-    def estimate_noise_ar_coeffs(
-        cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        ar_ordre: int = 10,
-        quantile_ratio: float = 1 / 3,
-        smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
-        """Estimate the coefficients of the filtre generating the coloured noise from a white one.
-
-        Args:
-            x (npt.NDArray[complex]): Input temporal signal, for each frequency band
-            n_fft (int): Number of frequential bins
-            fs (float): Sampling rate
-            ar_ordre (int): Ordre of the estimated AR filtre. ~ 10?
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
-                At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
-
-        Returns:
-            npt.NDArray[complex]: Coefficients of the AR filtre.
-        """
-        noise_psd = cls.estimate_noise_psd(
-            x,
-            n_fft=n_fft,
-            fs=fs,
-            quantile_ratio=quantile_ratio,
-            smoothing_factor=smoothing_factor,
-        )
-        # Step 3: calculating the autocovariance of the noise
-        # autocovariance (vector) of the noise
-        ac_coeffs = np.real(np.fft.ifft(noise_psd, n=n_fft))
-        # coefficients matrix of the Yule-Walker system
-        # = autocovariance matrix with the last row and last column removed
-        r_mat = alg.toeplitz(ac_coeffs[: ar_ordre - 1], ac_coeffs[: ar_ordre - 1])
-        # the constant column of the Yule-Walker system
-        r = ac_coeffs[1:ar_ordre].T
-        # the AR coefficients (indices 1, ..., N-1)
-        b = -np.asarray(alg.pinv(r_mat, return_rank=False) @ r)
-        # the AR coefficients (indices 0, ..., N-1)
-        b = np.insert(b, 0, 1)
-        return b
-
-    @classmethod
-    def whiten(
-        cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        quantile_ratio: float = 1 / 3,
-        ar_ordre: int = 10,
-        smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
-        """Whiten the noise in input temporal signal
-
-        Args:
-            x (npt.NDArray[complex]): Input temporal signal
-            n_fft (int): Number of frequential bins
-            fs (float): Sampling rate
-            ar_ordre (int): Ordre of the estimated AR filtre
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
-
-        Returns:
-            npt.NDArray[complex]: Temporal signal with noise whitened.
-        """
-        b = cls.estimate_noise_ar_coeffs(
-            x,
-            n_fft=n_fft,
-            fs=fs,
-            ar_ordre=ar_ordre,
-            quantile_ratio=quantile_ratio,
-            smoothing_factor=smoothing_factor,
-        )
-        # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
-        # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
-        # are the coefficients of the AR's denominator, i.e. the array b
-        # denominator coeff of the FIR's transfer function is 1
-        x_whitened = sig.lfilter(b, [1], x)
-        return x_whitened
-
-
-class AdaptiveSpectralMatrixTracking:
-    """Some stuff from Badeau et al., 2005"""
-
-    @staticmethod
-    def _step_spectral_matrix(
+    def track_spectral_matrix(
         e: npt.NDArray[complex],
         g: npt.NDArray[complex],
         w_cap: npt.NDArray[complex],
@@ -365,7 +152,6 @@ class AdaptiveSpectralMatrixTracking:
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """
         See Badeau et al., 2005
-        and HrHatrac David et al., 2006
         For reference. Same notations as the first article.
 
         Args:
@@ -393,7 +179,7 @@ class AdaptiveSpectralMatrixTracking:
         return phi_cap, psi_cap
 
     @staticmethod
-    def _step_spectral_matrix_fae(
+    def track_spectral_matrix_fae(
         e: npt.NDArray[complex],
         g: npt.NDArray[complex],
         w_cap: npt.NDArray[complex],
@@ -447,7 +233,7 @@ class AdaptiveSpectralMatrixTracking:
         return phi_cap, psi_cap, a_bar, b_bar
 
     @staticmethod
-    def _step_eigen_fae(
+    def track_poles_fae(
         phi_cap: npt.NDArray[complex],
         a_bar: npt.NDArray[complex],
         b_bar: npt.NDArray[complex],
@@ -494,7 +280,7 @@ class AdaptiveSpectralMatrixTracking:
         return d, g_cap
 
     @staticmethod
-    def _step_eigen_gradient(
+    def track_poles_hrhatrac(
         phi_cap: npt.NDArray[complex],
         d_prev: npt.NDArray[complex],
         g_cap_prev: npt.NDArray[complex],
@@ -502,8 +288,8 @@ class AdaptiveSpectralMatrixTracking:
         mu_g: float = 0.99,
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """
-        See Badeau et al., 2005, part 4. 'Eigenvalues tracking'
-        For reference. Same notations as the first article.
+        and HrHatrac David et al., 2006
+        For reference. Same notations as the article.
 
         Args:
             g_cap_prev (npt.NDArray[complex]): [description]
@@ -530,11 +316,24 @@ class AdaptiveSpectralMatrixTracking:
         return d, g_cap
 
 
+class Fls:
+    """Fast sequential LS estimation ...
+    see David et Badeau, 2007
+    """
+
+    @staticmethod
+    def track_esm_alphas(
+        x: npt.NDArray[float],
+        d: npt.NDArray[complex],
+    ) -> npt.NDArray[complex]:
+        raise NotImplementedError()
+
+
 class Fapi:
     """See Badeau et al., 2005"""
 
     @staticmethod
-    def _step_spectral_weights_fapi(
+    def track_spectral_weights_fapi(
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
         z_cap_prev: npt.NDArray[float],
@@ -573,7 +372,7 @@ class Fapi:
         return w, z, e_ap, g
 
     @staticmethod
-    def _step_spectral_weights_sw_fapi(
+    def track_spectral_weights_swfapi(
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
         z_cap_prev: npt.NDArray[float],
@@ -608,11 +407,11 @@ class Fapi:
         # don't think so..
         # some additional definitions
         l = x_cap_prev.shape[-1]
-        r = w_cap_prev.shape[-1]
+        # r = w_cap_prev.shape[-1]
         # Rank of the update involved in equation (4)
         # p = 2 in the truncated window case.
         p = 2
-        j_cap_bar = np.asarray([1, 0], [0, -(beta**l)])
+        j_cap_bar = np.asarray([[1, 0], [0, -(beta**l)]])
         # Section similar to SW - PAST
         # Update the $x(t)$ vector
         x_prev_l = x_cap_prev[:, 0]
@@ -625,9 +424,10 @@ class Fapi:
         # n x p matrix
         y = w_cap_prev.T.conj() @ x
         v_hat_prev_l = v_cap_hat_prev[:, 0]
-        # and the $\hat{Y}(t)$ matrix
-        y_cap_hat = np.roll(v_cap_hat_prev, shift=-1, axis=1)
-        y_cap_hat[:, -1] = y
+        # and the $Y(t)$ matrix
+        # (there's a mistake in Table II, it is indeed $Y(t)$ and not $\hat{Y}(t)$)
+        y_cap = np.roll(v_cap_hat_prev, shift=-1, axis=1)
+        y_cap[:, -1] = y
         v_prev_l = w_cap_prev.T.conj() @ x_prev_l
         #
         # a n x p matrix actually
@@ -636,7 +436,7 @@ class Fapi:
         # an r x p matrix
         h_bar = z_cap_prev @ y_bar_hat
         # an r x p matrix
-        g_bar = h_bar @ alg.inv(beta * alg.inv(j_cap_bar) + y_bar.T.conj() @ h)
+        g_bar = h_bar @ alg.inv(beta * alg.inv(j_cap_bar) + y_bar.T.conj() @ h_bar)
         # TW - API main section
         epsilon_var_bar = alg.sqrtm(x_bar.T.conj() @ x_bar - y_bar.T.conj() @ y_bar)
         rho_bar = (
@@ -669,7 +469,7 @@ class Yast:
     """See Badeau et al., 2008"""
 
     @classmethod
-    def step_spectral_weights(
+    def track_spectral_weights(
         cls,
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
@@ -719,7 +519,7 @@ class Yast:
         c_yy_bar[-1, :-1] = z
         c_yy_bar[-1, -1] = gamma
         #
-        phi_var_bar, lambd = cls._step_conjugate_gradient(
+        phi_var_bar, lambd = cls._track_conjugate_gradient(
             c_cap_yy_ap,
             c_yy_bar,
             z,
@@ -758,7 +558,7 @@ class Yast:
         return w_cap, c_cap_xx, c_cap_yy
 
     @staticmethod
-    def _step_conjugate_gradient(
+    def _track_conjugate_gradient(
         c_cap_yy_ap: npt.NDArray[complex],
         c_cap_yy_bar: npt.NDArray[complex],
         z: npt.NDArray[complex],
@@ -952,39 +752,88 @@ class AdaptiveEsprit:
     """Centralised methods used in the Adaptive ESPRIT framework."""
 
     @classmethod
-    def _step(
-        x: npt.NDArray[float],
-        w_cap_prev: npt.NDArray[complex],
-        z_cap_prev: npt.NDArray[complex],
-        x_cap_prev: npt.NDArray[float],
-        v_cap_hat_prev: npt.NDArray[complex],
-    ) -> Tuple[npt.NDArray[complex], ...]:
-        w_cap, z_cap, x_cap, v_cap_hat, e, g = Fapi._step_spectral_weights_sw_fapi(
-            x, w_cap_prev, z_cap_prev, x_cap_prev, v_cap_hat_prev
-        )
-        phi_cap, psi_cap = AdaptiveSpectralMatrixTracking._step_spectral_matrix(
-            e, g, w_cap, w_cap_prev, psi_cap_prev
-        )
-
-
-class FiltreBank:
-    """Some filtre bank design stuff"""
-
-    def __init__(
-        self, nb_bands: int, decimation_factor: int, scale: Union["lin", "log"]
-    ) -> None:
-        self.nb_bands = nb_bands
-        self.scale = scale
-        self.decimation_factor = decimation_factor
-
-    def process(x: npt.NDArray[complex]) -> npt.NDArray[complex]:
-        """[summary]
+    def estimate_esm(
+        cls, x: npt.NDArray[float], n: int, r: int, l_block: int, l_win: int = None
+    ) -> Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]:
+        """Estimates the complete ESM model using the ESPRIT algorithm.
 
         Args:
-            x (npt.NDArray[complex]): [description]
+            x (np.ndarray): input signal
+            n (int): number of lines in the Hankel matrix S
+            k (int): number of searched sinusoids
 
         Returns:
-            npt.NDArray[complex]: (nb_bands, input_size // decimation factor)
+            Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        assert x.ndim == 1
-        x_bands = np.empty((self.nb_bands,) + x.shape)
+        if l_win is None:
+            l_win = 120
+        nb_blocks = x.shape[0] // l_block + 1
+        #
+        x_block = x[:l_block]
+        # FIRST RUN USING CLASSIC ESPRIT
+        w_cap, w_cap_per = Esprit.subspace_weighting_mats(x_block, n, r)
+        phi_cap = Esprit.spectral_matrix(w_cap)
+        zs = Esprit.estimate_poles(phi_cap)
+        alphas = Esprit.estimate_esm_alphas(x, zs)
+        esm = EsmModel.from_complex(zs, alphas)
+        #
+        esm_list = [esm]
+        w_cap_list = [w_cap]
+        #
+        # See the various articles for initial values of the matrices
+        p = 2  # truncated window in the Fapi algorithm
+        z_cap = np.identity(r)
+        x_cap = np.zeros((l_block, l_win))
+        v_cap_hat = np.zeros((r, l_win))
+        e = np.zeros((l_block, p))
+        g = np.zeros((r, p))
+        #
+        for j in range(1, nb_blocks):
+            x_block = x[j * l_block : (j + 1) * l_block]
+            w_cap, z_cap, x_cap, v_cap_hat, e, g = Fapi.track_spectral_weights_swfapi(
+                x_block, w_cap, z_cap, x_cap, v_cap_hat
+            )
+            phi_cap, psi_cap = MiscAdaptiveTracking.track_spectral_matrix(
+                e, g, w_cap, w_cap, psi_cap
+            )
+            zs, g_cap = MiscAdaptiveTracking.track_eigen_hrhatrac(phi_cap, zs, g_cap)
+            # The poles change at each step so the adaptive LS algorithm can't be used here.
+            alphas = Esprit.estimate_esm_alphas(x_block, zs)
+            #
+            esm = EsmModel.from_complex(zs, alphas)
+            #
+            esm_list.append(esm)
+            w_cap_list.append(w_cap)
+        return esm, w_cap, None
+
+
+if __name__ == "__main__":
+    sr = 44100
+    n_s_block = 512
+    n_fft = 1024
+
+    nb_blocks = 1200
+    # number of sinusoids
+    r = 8
+    # Normalised damping ratios, multiply by sampling rate to get the 'deltas' in Amp.s-1
+    gammas_list = rng.normal(0.002, 0.0001, (nb_blocks, r))
+    # Normalised frequencies
+    nus_list = rng.normal(0.1, 0.05, (nb_blocks, r))
+    amps_list = rng.uniform(0.1, 1, (nb_blocks, r))
+    phis_list = rng.uniform(0, 2 * np.pi, (nb_blocks, r))
+
+    x_esm = AdaptiveEsmModel.from_param_lists(
+        gammas_list, nus_list, amps_list, phis_list
+    )
+
+    x_sine = x_esm.synth(n_s_block)
+
+    n_est = 20
+    x_esm_est, _, _ = AdaptiveEsprit.estimate_esm(x_sine, n_est, r, n_s_block)
+
+    # print(x_esm.nus * sr)
+    # print(x_esm_est.nus * sr)
+    print(x_esm.gammas * sr)
+    # print(x_esm_est.gammas * sr)
+
+    x_sine_est = x_esm_est.synth(n_s)
