@@ -203,7 +203,7 @@ def decimate(sig: np.ndarray, factor: int):
     return decimated
 
 
-def whiten(sig: np.ndarray, smoothing_order: int, ar_order: int):
+def whiten(sig: np.ndarray, smoothing_order: int, rank: int, ar_order: int):
     """
     Whiten a signal with colored noise.
 
@@ -211,6 +211,7 @@ def whiten(sig: np.ndarray, smoothing_order: int, ar_order: int):
     ----------
     `sig`: the input signal
     `smoothing_order`: (discrete) at least two times the length of the PSD's principal lobe
+    `rank` : rank factor; for example 2 for median, 3 for (1/3)-(2/3), etc...
     `ar_order`: autoregressive model order (10 to 20)
 
     Return
@@ -222,8 +223,6 @@ def whiten(sig: np.ndarray, smoothing_order: int, ar_order: int):
     `psd_sig_white`: PSD of the filtered signal
     `psd_noise_white`: Estimatiobn of the white noise PSD
     """
-
-    rank = 4  # rank factor (for example 2 for median, 3 for (1/3)-(2/3)
     N = len(sig)
     Nfft = nextpow2(N)
 
