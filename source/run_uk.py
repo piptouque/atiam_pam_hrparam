@@ -33,8 +33,8 @@ if __name__ == "__main__":
                         help='Logging config file path')
     parser.add_argument('--out_dir', default=None, type=str,
                         help='Output directory for output data')
-    parser.add_argument('--finger_pos', default=0, type=float,
-                        help='Finger position on soundboard')
+    # parser.add_argument('--finger_pos', default=0, type=float,
+    #                    help='Finger position on soundboard')
     args = parser.parse_args()
 
     # Loading config from config files
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # There is no external force applied to the body.
     ext_force_body = ForceNull()
     # List of finger constraints, there is none on the body
-    finger_constraints = [args.finger_pos, 0]
+    # finger_constraints = [args.finger_pos, 0]
 
     # The string and body are initially at rest.
     q_n_is = [np.zeros(sim.n[i].shape, dtype=float) for i in range(2)]
@@ -80,10 +80,12 @@ if __name__ == "__main__":
     # Run the simulation / solve the system.
     t, q_ns, dq_ns, ddq_ns, ext_force_n_ts = sim.run(
         [string, body], [ext_force_string, ext_force_body],
-        q_n_is, dq_n_is, finger_constraints)
+        q_n_is, dq_n_is)
 
     y_ns = [struct.y_n(q_ns[i], sim.n[i])
             for (i, struct) in enumerate([string, body])]
+    dy_ns = [struct.y_n(dq_ns[i], sim.n[i])
+             for (i, struct) in enumerate([string, body])]
 
     # compute data frames from the result.
     df_q_n = pd.DataFrame(q_ns[0], index=sim.n[0], columns=t)
@@ -98,6 +100,7 @@ if __name__ == "__main__":
     tt = np.outer(np.ones_like(x), t)
 
     y_n = y_ns[0]
+    dy_n = dy_ns[0]
     ext_force_n_t = ext_force_n_ts[0]
 
     # Get the total displacement from the sum of the modal displacements.
@@ -105,29 +108,37 @@ if __name__ == "__main__":
     for j in range(len(y_n)):
         y += y_n[j](log.audio.x_s_rel * string.data.l)
 
+    # Get the total speed from the sum of the modal speeds.
+    dy = np.zeros_like(t)
+    dy_bridge = np.zeros_like(t)
+    for j in range(len(dy_n)):
+        dy += dy_n[j](log.audio.x_s_rel * string.data.l)
+        dy_bridge += dy_n[j](string.data.l)
+
     if log.do_save:
         df_q_n.to_csv(output_spreadsheet_path / 'q_n.csv')
-        df_ddq_n.to_csv(output_spreadsheet_path / 'dq_n.csv')
+        df_dq_n.to_csv(output_spreadsheet_path / 'dq_n.csv')
         df_ddq_n.to_csv(output_spreadsheet_path / 'ddq_n.csv')
         df_ext_force_n_t.to_csv(output_spreadsheet_path / 'ext_force_n_t.csv')
 
-    if log.do_log or log.do_save:
-        # EXCITATION FORCE ext_force
-        fig = plt.figure(figsize=(8, 6))
-        ax = fig.add_subplot(1, 1, 1, projection='3d')
-        f_x = ext_force_string(xx, tt)
-        surf = ax.plot_surface(xx, tt, f_x, cmap='coolwarm')
-        ax.set_title(f'Excitation force applied to the string')
-        ax.set_xlabel('$x$ (m)')
-        ax.set_ylabel('$t$ (s)')
-        ax.set_zlabel('$F_{ext}(x, t)$ (N)')
-        fig.colorbar(surf, ax=ax)
-        if log.do_save:
-            fig.savefig(output_figure_path / 'ext_force.svg',
-                        facecolor='none', transparent=True)
-        if log.do_log:
-            plt.show()
-        plt.close(fig)
+    if (log.do_log or log.do_save):
+        if log.force:
+            # EXCITATION FORCE ext_force
+            fig = plt.figure(figsize=(8, 6))
+            ax = fig.add_subplot(1, 1, 1, projection='3d')
+            f_x = ext_force_string(xx, tt)
+            surf = ax.plot_surface(xx, tt, f_x, cmap='coolwarm')
+            ax.set_title('Excitation force applied to the string')
+            ax.set_xlabel('$x$ (m)')
+            ax.set_ylabel('$t$ (s)')
+            ax.set_zlabel('$F_{ext}(x, t)$ (N)')
+            fig.colorbar(surf, ax=ax)
+            if log.do_save:
+                fig.savefig(output_figure_path / 'ext_force.svg',
+                            facecolor='none', transparent=True)
+            if log.do_log:
+                plt.show()
+            plt.close(fig)
 
         # TOTAL DISPLACEMENT of the string
         fig = plt.figure(figsize=(8, 6))
@@ -145,6 +156,8 @@ if __name__ == "__main__":
 
         if log.audio.save:
             wav.write(output_audio_path / 'y.wav', int(1/sim.h), y/np.max(y))
+            wav.write(output_audio_path / 'dy.wav', int(1/sim.h), dy/np.max(dy))
+            wav.write(output_audio_path / 'dy_bridge.wav', int(1/sim.h), dy_bridge/np.max(dy_bridge))
 
         # MODAL DISPLACEMENTS of the String y_n
         if log.modal_plots:
@@ -154,19 +167,22 @@ if __name__ == "__main__":
             axes = []
             surfs = []
             for (j, y_j) in enumerate(y_n):
-                ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
+                # ax = fig.add_subplot(2, len(y_n)//2+1, j+1, projection='3d')
+                ax = fig.add_subplot(2, len(y_n)//2+1, j+1)
                 axes.append(ax)
-                y_x = y_j(xx)
+                # y_x = y_j(xx)
+                y_x = y_j(log.audio.x_s_rel * string.data.l)
                 #
-                surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
+                # surf = ax.plot_surface(xx, tt, y_x, cmap='coolwarm')
+                surf = ax.plot(t, y_x)
                 surfs.append(surf)
                 #
                 ax.set_title(f'$n={j}$')
                 ax.set_xlabel('$x$ (m)')
                 ax.set_ylabel('$t$ (s)')
-                ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
+                # ax.set_zlabel(f'$y_{j}^S(x, t)$ (m)')
             # add heat map
-            fig.colorbar(surfs[0], ax=axes)
+            # fig.colorbar(surfs[0], ax=axes)
             if log.do_save:
                 fig.savefig(output_figure_path / 'y_n.svg',
                             facecolor='none', transparent=True)
