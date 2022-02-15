@@ -39,12 +39,13 @@ class EsmSubspaceDecomposer:
     ) -> Tuple[
         EsmModel, npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]
     ]:
-        """[summary]
+        """Decomposes the termporal signal with an ESM model
 
         Args:
-            n (int): [description]
-            p_max (int): [description]
-            n_fft (int): [description]
+            x (npt.NDArray[complex]): [description]
+
+        Returns:
+            Tuple[ EsmModel, npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex] ]: [description]
         """
 
         # 1. Whiten the noise
@@ -68,5 +69,5 @@ class EsmSubspaceDecomposer:
 
         # 3. Apply ESPRIT on the whitened signal
         # and estimate the ESM model parameters
-        x_esm, w, w_per = Esprit.estimate_esm(x_white, self.n_esprit, r)
-        return x_esm, w, w_per, x_white
+        x_esm = Esprit.estimate_esm(x_white, self.n_esprit, r)
+        return x_esm, x_white

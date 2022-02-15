@@ -6,7 +6,6 @@ import scipy.ndimage as img
 import numpy as np
 import numpy.typing as npt
 
-from source.hr.esm import EsmModel
 
 class NoiseWhitening:
     """[summary]"""
@@ -168,7 +167,7 @@ class FiltreBank:
         self.scale = scale
         self.decimation_factor = decimation_factor
 
-    def process(self,x: npt.NDArray[complex]) -> npt.NDArray[complex]:
+    def process(self, x: npt.NDArray[complex]) -> npt.NDArray[complex]:
         """[summary]
 
         Args:

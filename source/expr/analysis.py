@@ -153,12 +153,12 @@ def perform_analysis(
         smoothing_factor_noise=conf.hr.whitening.smoothing_factor,
         quantile_ratio_noise=conf.hr.whitening.quantile_ratio,
     )
-    esm_excit_win, w_excit_win, w_per_excit_win, white_excit_win = decomp.perform(
+    esm_excit_win, white_excit_win = decomp.perform(
         data_excit_win
     )
-    esm_acc_win, w_acc_win, w_per_acc_win, white_acc_win = decomp.perform(data_acc_win)
-    esm_mic_win, w_mic_win, w_per_mic_win, white_mic_win = decomp.perform(data_mic_win)
-    esm_imp_win, w_imp_win, w_per_imp_win, white_imp_win = decomp.perform(imp_win)
+    esm_acc_win, white_acc_win = decomp.perform(data_acc_win)
+    esm_mic_win, white_mic_win = decomp.perform(data_mic_win)
+    esm_imp_win, white_imp_win = decomp.perform(imp_win)
     # Also compute the spectra of the signals with whitened noise.
     ft_excit_white = np.fft.fft(white_excit_win, n=n_fft)
     ft_acc_white = np.fft.fft(white_acc_win, n=n_fft)
@@ -205,33 +205,25 @@ def perform_analysis(
         "excit": {
             "win": {
                 "esm": esm_excit_win,
-                "w": w_excit_win,
-                "w_per": w_per_excit_win,
-                "white": white_excit_win,
+                "white": white_excit_win
             }
         },
         "acc": {
             "win": {
                 "esm": esm_acc_win,
-                "w": w_acc_win,
-                "w_per": w_per_acc_win,
-                "white": white_acc_win,
+                "white": white_acc_win
             }
         },
         "mic": {
             "win": {
                 "esm": esm_mic_win,
-                "w": w_mic_win,
-                "w_per": w_per_mic_win,
-                "white": white_mic_win,
+                "white": white_mic_win
             }
         },
         "imp": {
             "win": {
                 "esm": esm_imp_win,
-                "w": w_imp_win,
-                "w_per": w_per_imp_win,
-                "white": white_imp_win,
+                "white": white_imp_win
             }
         },
     }

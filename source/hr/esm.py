@@ -101,13 +101,12 @@ class EsmModel:
         Returns:
             Tuple[npt.NDArray[float], npt.NDArray[float]]: [description]
         """
-        log_zs = np.log(zs)
         # DAMPING RATIOS AND FREQUENCIES
         # damping factors
-        gammas = -np.real(log_zs)
+        gammas = -np.log(np.abs(zs))
         if clip_damp:
             gammas = np.maximum(0, gammas)
-        nus = np.imag(log_zs) / (2 * np.pi)  # frequencies
+        nus = np.angle(zs) / (2 * np.pi)  # frequencies
         if clip_freq:
             # Normalised frequencies should
             # be in the [-0.5, 0.5] range.
@@ -224,7 +223,6 @@ class AdaptiveEsmModel:
         Args:
             esm_list (List[EsmModel]): [description]
         """
-        s = np.shape(esm_list)
         self.esm_blocks = esm_list
 
     @classmethod
@@ -245,7 +243,7 @@ class AdaptiveEsmModel:
         """
         s = np.shape(gammas_list)
         assert len(s) == 2
-        nb_blocks = s[-1]
+        nb_blocks = s[0]
         esm_list = []
         for j in range(nb_blocks):
             gammas = gammas_list[j]

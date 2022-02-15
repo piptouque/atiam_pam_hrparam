@@ -4,6 +4,7 @@ import scipy.linalg as alg
 import scipy.signal as sig
 import scipy.ndimage as img
 import numpy as np
+import tqdm
 
 rng = np.random.default_rng(123)
 import numpy.typing as npt
@@ -27,9 +28,9 @@ class Esprit:
         Returns:
             npt.NDArray[complex]: [description]
         """
-        x_h = alg.hankel(x[:n], r=x[n - 1 :])
+        x_cap = alg.hankel(x[:n], r=x[n - 1 :])
         l = x.shape[-1] - n + 1
-        return x_h @ x_h.transpose().conj() / l
+        return x_cap @ x_cap.transpose().conj() / l
 
     @classmethod
     def subspace_weighting_mats(
@@ -69,20 +70,38 @@ class Esprit:
         return phi_cap
 
     @classmethod
+    def partner_matrices(
+        cls,
+        w_cap: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """Get the matrices $(\Psi, \Omega)$such that $\Phi = \Omega \Psi$
+        Args:
+            w_cap (npt.NDArray[complex]): Subspace weighting matrix
+        Returns:
+            npt.NDArray[complex]: ($\Psi$, $\Omega$)
+        """
+
+        w_cap_down = w_cap[:-1]
+        w_cap_up = w_cap[1:]
+        psi_cap = w_cap_down.T.conj() @ w_cap_up
+        omega_cap = alg.pinv(w_cap_down.T.conj() @ w_cap_down)
+        return psi_cap, omega_cap
+
+    @classmethod
     def estimate_poles(
         cls,
         phi_cap: npt.NDArray[complex],
-    ) -> npt.NDArray[complex]:
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """Estimates the poles of the spectral matrix
 
         Args:
             phi_cap (npt.NDArray[complex]): Spectral matrix
 
         Returns:
-            npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings)
+            npt.NDArray[complex], npt.NDArray[complex]]: (estimated poles, right eigenvectors)
         """
-        zs = alg.eig(phi_cap, left=False, right=False)
-        return zs
+        zs, g_cap = alg.eig(phi_cap, left=False, right=True)
+        return zs, g_cap
 
     @classmethod
     def estimate_esm_alphas(
@@ -103,9 +122,8 @@ class Esprit:
             Tuple[npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings, estimated real amplitudes, estimated initial phases)
         """
         log_zs = np.log(zs)
-        # signal's length
-        n_s = len(x)
-        ts = np.arange(n_s)  # array of discrete times
+        # array of discrete times
+        ts = np.arange(len(x))
         # Vandermonde matrix of dimension N
         v_mat = np.exp(np.outer(ts, log_zs))
         alphas = alg.pinv(v_mat) @ x
@@ -125,14 +143,15 @@ class Esprit:
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        w_cap, w_cap_per = cls.subspace_weighting_mats(x, n, r)
+        # n_cap = len(x)
+        # TODO: set default for n according to the Cramer-Rao bounds!
+        w_cap, _ = cls.subspace_weighting_mats(x, n, r)
         phi_cap = cls.spectral_matrix(w_cap)
-        zs = cls.estimate_poles(phi_cap)
+        zs, _ = cls.estimate_poles(phi_cap)
         alphas = cls.estimate_esm_alphas(x, zs)
         #
         esm = EsmModel.from_complex(zs, alphas)
-
-        return (esm, w_cap, w_cap_per)
+        return esm
 
 
 class MiscAdaptiveTracking:
@@ -164,14 +183,15 @@ class MiscAdaptiveTracking:
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$)
         """
+        assert np.ndim(e) == 1 and np.ndim(g) == 1
         # Init values of interest from parameters
         nu = w_cap[-1].T.conj()
         nu_norm_sq = np.sum(np.abs(nu) ** 2)
-        w_cap_down_prev, w_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
+        w_cap_down_prev, w_cap_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
         e_down, e_up = e[:-1], e[1:]
         # Algorithm given in Table 1
         e_minus = w_cap_down_prev.T.conj() @ e_up
-        e_plus = w_up_prev.T.conj() @ e_down
+        e_plus = w_cap_up_prev.T.conj() @ e_down
         e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
         psi_cap = psi_cap_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
         phi = psi_cap.T.conj() @ nu
@@ -207,28 +227,33 @@ class MiscAdaptiveTracking:
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$, $\bar{a}$, $\bar{b}$)
         """
+        assert np.ndim(e) == 1 and np.ndim(g) == 1
         # Init values of interest from parameters
         nu = w_cap[-1].T.conj()
         nu_norm_sq = np.sum(np.abs(nu) ** 2)
+        # w_id_down = nu @ nu.T.conj()
+        # w_id_down_err = alg.norm(nu)
         w_cap_down_prev, w_cap_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
         e_down, e_up = e[:-1], e[1:]
         # Algorithm given in Table 1
         e_minus = w_cap_down_prev.T.conj() @ e_up
         e_plus = w_cap_up_prev.T.conj() @ e_down
-        e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
-        psi_cap = psi_cap_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        e_plus_ap = e_plus + g * np.dot(e_up.conj(), e_down)
+        psi_cap = (
+            psi_cap_prev + np.outer(e_minus, g.conj()) + np.outer(g, e_plus_ap.conj())
+        )
         phi = psi_cap.T.conj() @ nu
         # Additional stuff
         nu_prev = w_cap_prev[-1].T.conj()
         nu_prev_norm_sq = np.sum(np.abs(nu_prev) ** 2)
         e_n = e[-1]
         #
-        phi_prev = psi_cap_prev.conj().H @ nu_prev
+        phi_prev = psi_cap_prev.conj().T.conj() @ nu_prev
         e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi
         delta_phi = phi / (1 - nu_norm_sq) - phi_prev / (1 - nu_prev_norm_sq)
         #
-        a_bar = np.stack((g, e_minus, nu_prev), axis=0)
-        b_bar = np.stack((e_plus_apap, g, delta_phi), axis=0)
+        a_bar = np.stack((g, e_minus, nu_prev), axis=1)
+        b_bar = np.stack((e_plus_apap, g, delta_phi), axis=1)
         phi_cap = phi_cap_prev + a_bar @ b_bar.T.conj()
         return phi_cap, psi_cap, a_bar, b_bar
 
@@ -256,8 +281,7 @@ class MiscAdaptiveTracking:
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
         """
-        raise NotImplementedError()
-        #
+        """
         a_bar_tilde = g_cap_ap_prev.T.conj() @ a_bar
         b_bar_tilde = g_cap_prev.T.conj() @ b_bar
         #
@@ -278,25 +302,31 @@ class MiscAdaptiveTracking:
         d_cap = g_cap_ap.T.conj() @ phi_cap @ g_cap
         d = np.diagonal(d_cap)
         return d, g_cap
+        """
+        raise NotImplementedError()
+
+
+class Hrhatrac:
+    """and HrHatrac David et al., 2006
+    For reference. Same notations as the article.
+    """
 
     @staticmethod
-    def track_poles_hrhatrac(
+    def track_poles(
         phi_cap: npt.NDArray[complex],
         d_prev: npt.NDArray[complex],
         g_cap_prev: npt.NDArray[complex],
         mu_d: float = 0.99,
         mu_g: float = 0.99,
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
-        """
-        and HrHatrac David et al., 2006
-        For reference. Same notations as the article.
+        """[summary]
 
         Args:
-            g_cap_prev (npt.NDArray[complex]): [description]
-            g_cap_ap_prev (npt.NDArray[complex]): [description]
-            d_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
-            a_bar (npt.NDArray[complex]): [description]
-            b_bar (npt.NDArray[complex]): [description]
+            phi_cap (npt.NDArray[complex]): [description]
+            d_prev (npt.NDArray[complex]): Previous right eigenvectors
+            g_cap_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+            mu_d (float, optional): [description]. Defaults to 0.99.
+            mu_g (float, optional): [description]. Defaults to 0.99.
 
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
@@ -311,29 +341,16 @@ class MiscAdaptiveTracking:
             phi_cap @ g_cap_prev @ np.diag(1 / d)
             + phi_cap.T.conj() @ e_cap_g_prev @ np.diag(1 / d.T.conj())
         )
-        # TODO: normalise the columns of $V(t)$ for numerical stability
-        g_cap = g_cap / alg.norm(g_cap, axis=1, keepdims=True)
+        g_norm = alg.norm(g_cap, axis=0, keepdims=True)
+        g_cap = g_cap / g_norm
         return d, g_cap
-
-
-class Fls:
-    """Fast sequential LS estimation ...
-    see David et Badeau, 2007
-    """
-
-    @staticmethod
-    def track_esm_alphas(
-        x: npt.NDArray[float],
-        d: npt.NDArray[complex],
-    ) -> npt.NDArray[complex]:
-        raise NotImplementedError()
 
 
 class Fapi:
     """See Badeau et al., 2005"""
 
     @staticmethod
-    def track_spectral_weights_fapi(
+    def track_spectral_weights(
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
         z_cap_prev: npt.NDArray[float],
@@ -347,37 +364,52 @@ class Fapi:
         """[summary]
 
         Args:
-            x (npt.NDArray[float]): [description]
-            w_prev (npt.NDArray[complex]): [description]
+            x (npt.NDArray[float]): (n)-dimensional vector
+            w_prev (npt.NDArray[complex]): (n, r) matrix. Spectral weights.
             z_prev (npt.NDArray[float]): [description]
-            beta (float, optional): [description]. Defaults to 0.99.
+            beta (float, optional): Forgetting factor. Defaults to 0.99.
 
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex]]: [description]
         """
+        assert 0 < beta < 1
         y = w_cap_prev.T.conj() @ x
         h = z_cap_prev @ y
-        g = h / (beta + y.T.conj() @ h)
+        g_denom = beta + np.dot(y.conj(), h)
+        g = h / g_denom
         # $\epsilon^2$ in the article
-        diff_sq = np.sum(np.abs(x) ** 2 - np.abs(y) ** 2)
+        epsilon_var_sq = np.sum(np.abs(x) ** 2) - np.sum(np.abs(y) ** 2)
         g_norm_sq = np.sum(np.abs(g) ** 2)
-        tau = diff_sq / (1 + diff_sq * g + np.sqrt(1 + diff_sq * g_norm_sq))
+        tau = epsilon_var_sq / (
+            1 + epsilon_var_sq * g_norm_sq + np.sqrt(1 + epsilon_var_sq * g_norm_sq)
+        )
         eta = 1 - tau * g_norm_sq
         y_ap = eta * y + tau * g
         h_ap = z_cap_prev.T.conj() @ y_ap
-        epsilon_vec = (tau / eta) * (z_cap_prev @ g - (h_ap.T.conj() @ g) * g)
-        z = (1 / beta) * (z_cap_prev - g @ h_ap.T.conj() + epsilon_vec @ g.T.conj())
+        epsilon = (tau / eta) * (z_cap_prev @ g - np.dot(h_ap.conj(), g) * g)
+        z_cap = (1 / beta) * (
+            z_cap_prev - np.outer(g, h_ap.conj()) + np.outer(epsilon, g.conj())
+        )
+        hey = np.max(np.abs(z_cap))
+        i_just_met_you = np.max(np.abs(g))
+        and_this_is_crazy = np.max(np.abs(np.outer(g, h_ap.conj())))
+        so_here_s_my_number = np.max(np.abs(np.outer(epsilon, g.conj())))
+        print(
+            "{:.2f} | {:.2f} | {:.2f} | {:.2f}".format(
+                hey, i_just_met_you, and_this_is_crazy, so_here_s_my_number
+            )
+        )
         e_ap = eta * x - w_cap_prev @ y_ap
-        w = w_cap_prev + e_ap @ g.T.conj()
-        return w, z, e_ap, g
+        w_cap = w_cap_prev + np.outer(e_ap, g.conj())
+        return w_cap, z_cap, e_ap, g
 
     @staticmethod
-    def track_spectral_weights_swfapi(
+    def track_spectral_weights_tw(
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
-        z_cap_prev: npt.NDArray[float],
+        z_cap_prev: npt.NDArray[complex],
         x_cap_prev: npt.NDArray[float],
-        v_cap_hat_prev: npt.NDArray[float],
+        v_cap_hat_prev: npt.NDArray[complex],
         beta: float = 0.99,
     ) -> Tuple[
         npt.NDArray[complex],
@@ -392,24 +424,21 @@ class Fapi:
         Args:
             x_vec (npt.NDArray[float]): [description]
             w_cap_prev (npt.NDArray[complex]): [description]
-            z_cap_prev (npt.NDArray[float]): [description]
-            x_cap_prev (npt.NDArray[float]): [description]
-            v_cap_hat_prev (npt.NDArray[float]): [description]
+            z_cap_prev (npt.NDArray[complex]): [description]
+            x_cap_prev (npt.NDArray[float]): Shape (n x l). Previous Hankel matrix.
+            v_cap_hat_prev (npt.NDArray[complex]): [description]
             beta (float, optional): Forgetting factor. Defaults to 0.99.
 
         Returns:
             Tuple[ npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex] ]:
                 ($W$, $Z$, $X$, $\hat{V}$, $e$, $g$)
         """
-
-        # TODO: HOW TO COMPUTE INVERSE SQUARE ROOT??
-        # this?: https://stackoverflow.com/a/66160829
-        # don't think so..
-        # some additional definitions
-        l = x_cap_prev.shape[-1]
-        # r = w_cap_prev.shape[-1]
+        w_cap_prev = w_cap_prev.astype(complex)
+        z_cap_prev = z_cap_prev.astype(complex)
+        v_cap_hat_prev = v_cap_hat_prev.astype(complex)
         # Rank of the update involved in equation (4)
         # p = 2 in the truncated window case.
+        l = x_cap_prev.shape[-1]
         p = 2
         j_cap_bar = np.asarray([[1, 0], [0, -(beta**l)]])
         # Section similar to SW - PAST
@@ -453,7 +482,7 @@ class Fapi:
         y_bar_ap = y_bar @ eta_bar + g_bar @ tau_bar
         h_bar_ap = z_cap_prev.T.conj() @ y_bar_ap
         epsilon_bar = (z_cap_prev @ g_bar - g_bar @ (h_bar_ap.T.conj() @ g_bar)) @ (
-            tau_bar @ np.inv(eta_bar)
+            tau_bar @ alg.inv(eta_bar)
         ).T.conj()
         z_cap = (1 / beta) * (
             z_cap_prev - g_bar @ h_bar_ap.T.conj() + epsilon_bar @ g_bar.T.conj()
@@ -461,7 +490,7 @@ class Fapi:
         # an n x p matrix
         e_bar_ap = x_bar @ eta_bar - w_cap_prev @ y_bar_ap
         w_cap = w_cap_prev + e_bar_ap @ g_bar.T.conj()
-        v_cap_hat = y_cap - g_bar(g_bar @ tau_bar).T.conj() @ y_cap
+        v_cap_hat = y_cap - g_bar @ (g_bar @ tau_bar).T.conj() @ y_cap
         return w_cap, z_cap, x_cap, v_cap_hat, e_bar_ap, g_bar
 
 
@@ -581,7 +610,6 @@ class Yast:
         #
         c_cap_ys_bar = c_cap_yy_bar @ s_cap
         c_cap_ss = s_cap.T.conj() @ c_cap_ys_bar
-        print(c_cap_ss.shape)
         assert c_cap_ss.shape == (3, 3)
         k = 0
         delta_j_cap = np.inf
@@ -753,7 +781,12 @@ class AdaptiveEsprit:
 
     @classmethod
     def estimate_esm(
-        cls, x: npt.NDArray[float], n: int, r: int, l_block: int, l_win: int = None
+        cls,
+        x: npt.NDArray[float],
+        n: int,
+        r: int,
+        l: int = None,
+        log_progress: bool = False,
     ) -> Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]:
         """Estimates the complete ESM model using the ESPRIT algorithm.
 
@@ -765,75 +798,95 @@ class AdaptiveEsprit:
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        if l_win is None:
-            l_win = 120
-        nb_blocks = x.shape[0] // l_block + 1
-        #
-        x_block = x[:l_block]
+        if l is None:
+            # With respect to the Cramer-Rao bounds
+            l = (3 * n) // 2
+        n_cap = n + l - 1
+        x_block = x[:n_cap]
         # FIRST RUN USING CLASSIC ESPRIT
-        w_cap, w_cap_per = Esprit.subspace_weighting_mats(x_block, n, r)
+        w_cap, _ = Esprit.subspace_weighting_mats(x_block, n, r)
         phi_cap = Esprit.spectral_matrix(w_cap)
-        zs = Esprit.estimate_poles(phi_cap)
-        alphas = Esprit.estimate_esm_alphas(x, zs)
+        zs, g_cap = Esprit.estimate_poles(phi_cap)
+        alphas = Esprit.estimate_esm_alphas(x_block, zs)
         esm = EsmModel.from_complex(zs, alphas)
         #
+        psi_cap, _ = Esprit.partner_matrices(w_cap)
+        #
         esm_list = [esm]
-        w_cap_list = [w_cap]
         #
         # See the various articles for initial values of the matrices
-        p = 2  # truncated window in the Fapi algorithm
+        # truncated window in the Fapi algorithm
+        p = 2
         z_cap = np.identity(r)
-        x_cap = np.zeros((l_block, l_win))
-        v_cap_hat = np.zeros((r, l_win))
-        e = np.zeros((l_block, p))
+        x_cap = alg.hankel(x_block[:n], r=x_block[n - 1 :])
+        v_cap_hat = np.zeros((r, l))
+        e = np.zeros((n, p))
         g = np.zeros((r, p))
-        #
-        for j in range(1, nb_blocks):
-            x_block = x[j * l_block : (j + 1) * l_block]
-            w_cap, z_cap, x_cap, v_cap_hat, e, g = Fapi.track_spectral_weights_swfapi(
-                x_block, w_cap, z_cap, x_cap, v_cap_hat
+        # l samples overlap, step of 1
+        it = range(1, len(x) - l)
+        if log_progress:
+            it = tqdm.tqdm(it)
+        for j in it:
+            x_block = x[j : j + n]
+            w_cap_prev = w_cap
+            z_cap_prev = z_cap
+            w_cap, z_cap, e, g = Fapi.track_spectral_weights(
+                x_block, w_cap_prev, z_cap_prev
             )
-            phi_cap, psi_cap = MiscAdaptiveTracking.track_spectral_matrix(
-                e, g, w_cap, w_cap, psi_cap
+            phi_cap, psi_cap, _, _ = MiscAdaptiveTracking.track_spectral_matrix_fae(
+                e, g, w_cap, w_cap_prev, psi_cap, phi_cap
             )
-            zs, g_cap = MiscAdaptiveTracking.track_eigen_hrhatrac(phi_cap, zs, g_cap)
+            noo = alg.norm(phi_cap)
+            # print(noo)
+            w_cap_id = w_cap.T.conj() @ w_cap
+            w_cap_err = alg.norm(np.identity(r) - w_cap_id)
+            # print(w_cap_err)
+            zs, g_cap = Hrhatrac.track_poles(phi_cap, zs, g_cap)
             # The poles change at each step so the adaptive LS algorithm can't be used here.
             alphas = Esprit.estimate_esm_alphas(x_block, zs)
             #
             esm = EsmModel.from_complex(zs, alphas)
+            # print(esm.nus * sr)
             #
             esm_list.append(esm)
-            w_cap_list.append(w_cap)
-        return esm, w_cap, None
+        esm_adapt = AdaptiveEsmModel(esm_list)
+        return esm_adapt
 
 
 if __name__ == "__main__":
-    sr = 44100
-    n_s_block = 512
-    n_fft = 1024
-
-    nb_blocks = 1200
+    sr = 4410
+    n_s = 8000
     # number of sinusoids
     r = 8
+    # adaptive stuff
+    nb_blocks = 10
+    l_block = n_s // nb_blocks
+    # logging
+    # log_progress = True
+    log_progress = False
+    # ESPRIT params
+    n = 32
+    l = (3 * n) // 2
+
     # Normalised damping ratios, multiply by sampling rate to get the 'deltas' in Amp.s-1
-    gammas_list = rng.normal(0.002, 0.0001, (nb_blocks, r))
+    gammas_list = np.repeat(rng.normal(0.002, 0.0001, (nb_blocks, r)), l_block, axis=0)
     # Normalised frequencies
-    nus_list = rng.normal(0.1, 0.05, (nb_blocks, r))
-    amps_list = rng.uniform(0.1, 1, (nb_blocks, r))
-    phis_list = rng.uniform(0, 2 * np.pi, (nb_blocks, r))
+    nus_list = np.repeat(rng.normal(0.1, 0.05, (nb_blocks, r)), l_block, axis=0)
+    amps_list = np.repeat(rng.uniform(0.1, 1, (nb_blocks, r)), l_block, axis=0)
+    phis_list = np.repeat(rng.uniform(0, 2 * np.pi, (nb_blocks, r)), l_block, axis=0)
 
     x_esm = AdaptiveEsmModel.from_param_lists(
         gammas_list, nus_list, amps_list, phis_list
     )
 
-    x_sine = x_esm.synth(n_s_block)
+    # one sample per value
+    x_sine = x_esm.synth(1)
 
-    n_est = 20
-    x_esm_est, _, _ = AdaptiveEsprit.estimate_esm(x_sine, n_est, r, n_s_block)
+    x_esm_est = AdaptiveEsprit.estimate_esm(x_sine, n, r, l, log_progress=log_progress)
 
-    # print(x_esm.nus * sr)
-    # print(x_esm_est.nus * sr)
-    print(x_esm.gammas * sr)
+    # print(x_esm.nus[0] * sr)
+    # print(x_esm_est.nus[0] * sr)
+    # print(x_esm.gammas * sr)
     # print(x_esm_est.gammas * sr)
 
-    x_sine_est = x_esm_est.synth(n_s)
+    # x_sine_est = x_esm_est.synth(n_s_block)
