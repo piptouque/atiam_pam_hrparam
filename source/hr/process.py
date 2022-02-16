@@ -1,70 +1,18 @@
+from typing import Tuple, List, Union
+
+import scipy.io.wavfile as wav
 import scipy.linalg as alg
 import scipy.signal as sig
 import scipy.ndimage as img
 import numpy as np
+import tqdm
+
+rng = np.random.default_rng(123)
 import numpy.typing as npt
 
-from typing import Tuple, List
 
-from hr.esm import EsmModel
-
-
-class EsmSubspaceDecomposer:
-    """[summary]"""
-
-    def __init__(
-        self,
-        fs: float,
-        n_esprit: int,
-        p_max_ester: int,
-        n_fft_noise: int,
-        smoothing_factor_noise: float,
-        ar_ordre_noise: int = 10,
-        thresh_ratio_ester: float = 0.1,
-    ) -> None:
-
-        self.fs = fs
-        self.n_fft_noise = n_fft_noise
-        #
-        self.n_esprit = n_esprit
-        #
-        self.smoothing_factor_noise = smoothing_factor_noise
-        self.ar_ordre_noise = ar_ordre_noise
-        #
-        self.p_max_ester = p_max_ester
-        self.thresh_ratio_ester = thresh_ratio_ester
-
-    def perform(
-        self, x: npt.NDArray[complex]
-    ) -> Tuple[
-        EsmModel, npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]
-    ]:
-        """[summary]
-
-        Args:
-            n (int): [description]
-            p_max (int): [description]
-            n_fft (int): [description]
-        """
-
-        # 1. Estimate the ESM model ordre on the original noisy signal
-        # because ESTER does work quite as well with the whitened signal
-        r = Ester.estimate_esm_ordre(
-            x,
-            self.n_esprit,
-            self.p_max_ester,
-            thresh_ratio=self.thresh_ratio_ester,
-        )
-
-        # 2. Whiten the noise
-        x_white = NoiseWhitening.whiten(
-            x, self.n_fft_noise, fs=self.fs, ar_ordre=self.ar_ordre_noise
-        )
-
-        # 3. Apply ESPRIT on the whitened signal
-        # and estimate the ESM model parameters
-        x_esm, w, w_per = Esprit.estimate_esm(x_white, self.n_esprit, r)
-        return x_esm, w, w_per, x_white
+from hr.esm import EsmModel, BlockEsmModel
+from hr.preprocess import NoiseWhitening, FiltreBank
 
 
 class Esprit:
@@ -81,232 +29,651 @@ class Esprit:
         Returns:
             npt.NDArray[complex]: [description]
         """
-        x_h = alg.hankel(x[:n], r=x[n - 1 :])
+        x_cap = alg.hankel(x[:n], r=x[n - 1 :])
         l = x.shape[-1] - n + 1
-        return x_h @ x_h.transpose().conj() / l
+        return x_cap @ x_cap.T.conj() / l
 
     @classmethod
-    def spectral_mats(
-        cls, x: npt.NDArray[complex], n: int, k: int
+    def subspace_weighting_mats(
+        cls, x: npt.NDArray[complex], n: int, r: int
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
-        """Gets W and W_per used in ESPRIT algorithm
+        """Gets W and W_per the subspace weighting matrices used in ESPRIT algorithm
 
         Args:
             x (npt.NDArray[complex]): [description]
             n (int): [description]
-            k (int): [description]
+            r (int): [description]
 
         Returns:
-            Tuple[npt.NDArray[complex], npt.NDArray[float]]: (n,k) and (n,n-k) W and W_per matrices
+            Tuple[npt.NDArray[complex], npt.NDArray[float]]: (n,r) and (n,n-r) W and W_per matrices
         """
         r_xx = cls._correlation_mat(x, n)
         u_1, _, _ = alg.svd(r_xx)
-        w = u_1[:, :k]
-        w_per = u_1[:, k:]
-        return w, w_per
+        w_cap = u_1[:, :r]
+        w_cap_per = u_1[:, r:]
+        return w_cap, w_cap_per
 
     @classmethod
-    def estimate_dampfreq(
+    def spectral_matrix(
         cls,
-        w: npt.NDArray[complex],
-    ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
-        """Estimates the normalised frequencies and normalised damping factors
+        w_cap: npt.NDArray[complex],
+    ) -> npt.NDArray[complex]:
+        """[summary]
+        Args:
+            w_cap (npt.NDArray[complex]): Subspace weighting matrix
+        Returns:
+            npt.NDArray[complex]: $\Phi$
+        """
+
+        w_cap_down = w_cap[:-1]
+        w_cap_up = w_cap[1:]
+        phi_cap = alg.pinv(w_cap_down) @ w_cap_up
+        return phi_cap
+
+    @classmethod
+    def partner_matrices(
+        cls,
+        w_cap: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """Get the matrices $(\Psi, \Omega)$such that $\Phi = \Omega \Psi$
+        Args:
+            w_cap (npt.NDArray[complex]): Subspace weighting matrix
+        Returns:
+            npt.NDArray[complex]: ($\Psi$, $\Omega$)
+        """
+
+        w_cap_down = w_cap[:-1]
+        w_cap_up = w_cap[1:]
+        psi_cap = w_cap_down.T.conj() @ w_cap_up
+        omega_cap = alg.pinv(w_cap_down.T.conj() @ w_cap_down)
+        return psi_cap, omega_cap
+
+    @classmethod
+    def estimate_poles(
+        cls,
+        phi_cap: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """Estimates the poles of the spectral matrix
+
+        Args:
+            phi_cap (npt.NDArray[complex]): Spectral matrix
+
+        Returns:
+            npt.NDArray[complex], npt.NDArray[complex]]: (estimated poles, right eigenvectors)
+        """
+        zs, g_cap = alg.eig(phi_cap, left=False, right=True)
+        return zs, g_cap
+
+    @classmethod
+    def estimate_esm_alphas(
+        cls,
+        x: npt.NDArray[float],
+        zs: npt.NDArray[complex],
+    ) -> Tuple[
+        npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]
+    ]:
+        """Estimates the normalised frequencies and normalised damping factors,
+        amplitude and initial phase
         for the ESM model using the ESPRIT algorithm.
 
         Args:
-            x (np.ndarray): input signal
-            n (int): number of lines in the Hankel matrix S
-            k (int): number of searched sinusoids
+            phi_cap (npt.NDArray[complex]): Spectral matrix
 
         Returns:
-            Tuple[npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings)
+            Tuple[npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]]: (estimated normalised frequencies, estimated normalised dampings, estimated real amplitudes, estimated initial phases)
         """
-        w_down = w[:-1]
-        w_up = w[1:]
-        phi = alg.pinv(w_down) @ w_up
-        zs = alg.eig(phi, left=False, right=False)
         log_zs = np.log(zs)
-        # no damping should ever be negative.
-        # fix: just discard those that are.
-        gammas = -np.minimum(0, np.real(log_zs))  # damping factors
-        nus = np.imag(log_zs) / (2 * np.pi)  # frequencies
-        return gammas, nus
-
-    @classmethod
-    def estimate_amp(
-        cls, x: npt.NDArray[float], gammas: npt.NDArray[float], nus: npt.NDArray[float]
-    ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
-        """Estimate the amplitude in the ESM model using least-squares.
-
-        Args:
-            x (npt.NDArray[float]): Input signal
-            gammas (npt.NDArray[float]): Array of estimated normalised damping factors
-            nus (npt.NDArray[float]): Array of estimated normalised frequencies
-
-        Returns:
-            Tuple[npt.NDArray[float], npt.NDArray[float]]: (estimated real amplitudes, estimated initial phases)
-        """
-        n_s = len(x)  # signal's length
-        ts = np.arange(n_s)  # array of discrete times
-        z_logs = -gammas + 2j * np.pi * nus  # log of the pole
-        v = np.exp(np.outer(ts, z_logs))  # Vandermonde matrix of dimension N
-        alphas = alg.pinv(v) @ x
-        amps = np.abs(alphas)
-        phis = np.angle(alphas)
-        return amps, phis
+        # array of discrete times
+        ts = np.arange(len(x))
+        # Vandermonde matrix of dimension N
+        v_mat = np.exp(np.outer(ts, log_zs))
+        alphas = np.dot(alg.pinv(v_mat), x)
+        return alphas
 
     @classmethod
     def estimate_esm(
-        cls, x: npt.NDArray[float], n: int, k: int
+        cls, x: npt.NDArray[float], n: int, r: int
     ) -> Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]:
         """Estimates the complete ESM model using the ESPRIT algorithm.
 
         Args:
             x (np.ndarray): input signal
             n (int): number of lines in the Hankel matrix S
-            k (int): number of searched sinusoids
+            r (int): number of searched sinusoids
 
         Returns:
             Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
         """
-        w, w_per = cls.spectral_mats(x, n, k)
-        gammas, nus = cls.estimate_dampfreq(w)
-        amps, phis = cls.estimate_amp(x, gammas, nus)
+        # n_cap = len(x)
+        # TODO: set default for n according to the Cramer-Rao bounds!
+        w_cap, _ = cls.subspace_weighting_mats(x, n, r)
+        phi_cap = cls.spectral_matrix(w_cap)
+        zs, _ = cls.estimate_poles(phi_cap)
+        alphas = cls.estimate_esm_alphas(x, zs)
+        #
+        esm = EsmModel.from_complex(zs, alphas)
+        return esm
 
-        esm = EsmModel(gammas=gammas, nus=nus, amps=amps, phis=phis)
 
-        return (esm, w, w_per)
+class BlockEsprit:
+    """Esprit by block: non adaptive"""
+
+    @classmethod
+    def estimate_esm(
+        cls,
+        x: npt.NDArray[float], n: int, r: int, l_win: int, step: int
+    ) -> BlockEsmModel:
+        """Computes `esprit` and `least_square` by blocks.
+
+        Arguments:
+            sig (npt.NDArray[float]): the full-length input signal
+            n (int): number of lines in the Hankel matrix S
+            r (int): signal space dimension = number of sinusoids (n-K: noise space dimension)
+            l_win (int): the window size (in samples)
+            step (int): the hop size (in samples)
+        Returns:
+        """
+        # the length of the signal (in samples)
+        n_cap = len(x)
+        nb_blocks = (n_cap - l_win) // step + 1
+        x_esm_list = []
+        for i in range(nb_blocks):
+            idx_start = step * i
+            idx_stop = step * i + l_win
+            # ith truncated signal
+            x_block = x[idx_start:idx_stop]
+
+            x_esm = Esprit.estimate_esm(x, n, r)
+            x_esm_list.append(x_esm)
+        x_esm = BlockEsmModel(x_esm_list)
+        return x_esm
 
 
-class NoiseWhitening:
-    """[summary]"""
+class MiscAdaptiveTracking:
+    """Some stuff from
+    Badeau et al., 2005,
+    and David et al., 2006
+    and David et al., 2007
+    """
 
     @staticmethod
-    def _estimate_noise_psd(
-        x_psd: npt.NDArray[complex], nu_width: float
-    ) -> npt.NDArray[complex]:
-        """Estimates the noise's PSD with a median filter (smoothing the signal's PSD)
+    def track_spectral_matrix(
+        e: npt.NDArray[complex],
+        g: npt.NDArray[complex],
+        w_cap: npt.NDArray[complex],
+        w_cap_prev: npt.NDArray[complex],
+        psi_cap_prev: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """
+        See Badeau et al., 2005
+        For reference. Same notations as the first article.
+
         Args:
-            x_psd (npt.NDArray[complex]): [description]
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
+            g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
+            w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
 
         Returns:
-            npt.NDArray[complex]: Estimated PSD of the noise.
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$)
         """
-        n_fft = x_psd.shape[-1]
-        size = int(np.round(nu_width * n_fft))
+        assert np.ndim(e) == 1 and np.ndim(g) == 1
+        # Init values of interest from parameters
+        nu = w_cap[-1].T.conj()
+        nu_norm_sq = np.sum(np.abs(nu) ** 2)
+        w_cap_down_prev, w_cap_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
+        e_down, e_up = e[:-1], e[1:]
+        # Algorithm given in Table 1
+        e_minus = w_cap_down_prev.T.conj() @ e_up
+        e_plus = w_cap_up_prev.T.conj() @ e_down
+        e_plus_ap = e_plus + g @ (e_up.T.conj() @ e_down)
+        psi_cap = psi_cap_prev + e_minus @ g.T.conj() + g @ e_plus_ap.T.conj()
+        phi = psi_cap.T.conj() @ nu
+        phi_cap = psi_cap + (nu @ phi.T.conj()) / (1 - nu_norm_sq)
+        return phi_cap, psi_cap
 
-        noise_psd = img.median_filter(x_psd, size=size)
-        return noise_psd
+    @staticmethod
+    def track_spectral_matrix_fae(
+        e: npt.NDArray[complex],
+        g: npt.NDArray[complex],
+        w_cap: npt.NDArray[complex],
+        w_cap_prev: npt.NDArray[complex],
+        psi_cap_prev: npt.NDArray[complex],
+        phi_cap_prev: npt.NDArray[complex],
+    ) -> Tuple[
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+    ]:
+        """
+        See Badeau et al., 2005, part 3. 'Spectral matrix tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            e (npt.NDArray[complex]): Current value of the vector $e$, obtained with a stubspace tracking method
+            g (npt.NDArray[complex]): Current value of the vector $g$, obtained with a subspace tracking method
+            w (npt.NDArray[complex]): Current value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            w_prev (npt.NDArray[complex]): Previous value of the subspace weighting matrix $W$, obtained with a subspace tracking method
+            psi_prev (npt.NDArray[complex]): Previous value of the matrix $\Psi$
+            phi_cap_prev (npt.NDArray[complex]): Previous value of the matrix $\Phi$
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($\Phi$, $\Psi$, $\bar{a}$, $\bar{b}$)
+        """
+        assert np.ndim(e) == 1 and np.ndim(g) == 1
+        # Init values of interest from parameters
+        nu = w_cap[-1].T.conj()
+        nu_norm_sq = np.sum(np.abs(nu) ** 2)
+        # w_id_down = nu @ nu.T.conj()
+        # w_id_down_err = alg.norm(nu)
+        w_cap_down_prev, w_cap_up_prev = w_cap_prev[:-1], w_cap_prev[1:]
+        e_down, e_up = e[:-1], e[1:]
+        # Algorithm given in Table 1
+        e_minus = w_cap_down_prev.T.conj() @ e_up
+        e_plus = w_cap_up_prev.T.conj() @ e_down
+        e_plus_ap = e_plus + g * np.dot(e_up.conj(), e_down)
+        psi_cap = (
+            psi_cap_prev + np.outer(e_minus, g.conj()) + np.outer(g, e_plus_ap.conj())
+        )
+        phi = psi_cap.T.conj() @ nu
+        # Additional stuff
+        nu_prev = w_cap_prev[-1].T.conj()
+        nu_prev_norm_sq = np.sum(np.abs(nu_prev) ** 2)
+        e_n = e[-1]
+        #
+        phi_prev = psi_cap_prev.conj().T.conj() @ nu_prev
+        e_plus_apap = e_plus_ap + (e_n / (1 - nu_norm_sq)) * phi
+        delta_phi = phi / (1 - nu_norm_sq) - phi_prev / (1 - nu_prev_norm_sq)
+        #
+        a_bar = np.stack((g, e_minus, nu_prev), axis=1)
+        b_bar = np.stack((e_plus_apap, g, delta_phi), axis=1)
+        phi_cap = phi_cap_prev + a_bar @ b_bar.T.conj()
+        return phi_cap, psi_cap, a_bar, b_bar
+
+    @staticmethod
+    def track_poles_fae(
+        phi_cap: npt.NDArray[complex],
+        a_bar: npt.NDArray[complex],
+        b_bar: npt.NDArray[complex],
+        g_cap_prev: npt.NDArray[complex],
+        g_cap_ap_prev: npt.NDArray[complex],
+        d_prev: npt.NDArray[complex],
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """
+        See Badeau et al., 2005, part 4. 'Eigenvalues tracking'
+        For reference. Same notations as the first article.
+
+        Args:
+            phi_cap (npt.NDArray[complex]): [description]
+            a_bar (npt.NDArray[complex]): [description]
+            b_bar (npt.NDArray[complex]): [description]
+            g_cap_prev (npt.NDArray[complex]): [description]
+            g_ap_cap_prev (npt.NDArray[complex]): [description]
+            d_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
+        """
+        """
+        a_bar_tilde = g_cap_ap_prev.T.conj() @ a_bar
+        b_bar_tilde = g_cap_prev.T.conj() @ b_bar
+        #
+        def phi_bar(z: complex) -> npt.NDArray[complex]:
+            car = 1 / (z - d_prev)
+            dar = b_bar_tilde.T.conj() @ np.diag(car) @ a_bar_tilde
+            # TODO: what is I_bar?? I'm putting the identity for now.
+            return np.identity(like=dar) - dar
+
+        #
+        g_cap_tilde = None  # TODO
+        g_cap_ap = None  # TODO
+        g_cap_tilde_ap = None  # TODO
+        #
+        g_cap = g_cap_prev @ g_cap_tilde
+        g_cap_ap = g_cap_ap_prev @ g_cap_tilde_ap
+        #
+        d_cap = g_cap_ap.T.conj() @ phi_cap @ g_cap
+        d = np.diagonal(d_cap)
+        return d, g_cap
+        """
+        raise NotImplementedError()
+
+
+class Hrhatrac:
+    """and HrHatrac David et al., 2006
+    For reference. Same notations as the article.
+    """
+
+    @staticmethod
+    def track_poles(
+        phi_cap: npt.NDArray[complex],
+        d_prev: npt.NDArray[complex],
+        g_cap_prev: npt.NDArray[complex],
+        mu_d: float = 0.99,
+        mu_g: float = 0.99,
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
+        """[summary]
+
+        Args:
+            phi_cap (npt.NDArray[complex]): [description]
+            d_prev (npt.NDArray[complex]): Previous right eigenvectors
+            g_cap_prev (npt.NDArray[complex]): Previous eigenvalues as a vector
+            mu_d (float, optional): [description]. Defaults to 0.99.
+            mu_g (float, optional): [description]. Defaults to 0.99.
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Current eigenvalues vector $d$,Current right eigenvectors matrix $G$)
+        """
+        assert 0 < mu_d < 1 and 0 < mu_g < 1
+        #
+        d = (1 - mu_d) * d_prev + mu_d * np.diagonal(
+            alg.inv(g_cap_prev) @ phi_cap @ g_cap_prev
+        )
+        e_cap_g_prev = g_cap_prev - phi_cap @ g_cap_prev @ np.diag(1 / d)
+        g_cap = (1 - mu_g) * g_cap_prev + mu_g * (
+            phi_cap @ g_cap_prev @ np.diag(1 / d)
+            + phi_cap.T.conj() @ e_cap_g_prev @ np.diag(1 / d.T.conj())
+        )
+        g_norm = alg.norm(g_cap, axis=0, keepdims=True)
+        g_cap = g_cap / g_norm
+        return d, g_cap
+
+
+class Fapi:
+    """See Badeau et al., 2005"""
+
+    @staticmethod
+    def track_spectral_weights(
+        x: npt.NDArray[float],
+        w_cap_prev: npt.NDArray[complex],
+        z_cap_prev: npt.NDArray[complex],
+        beta: float = 0.99,
+    ) -> Tuple[
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+    ]:
+        """[summary]
+
+        Args:
+            x (npt.NDArray[float]): (n)-dimensional vector
+            w_prev (npt.NDArray[complex]): (n, r) matrix. Spectral weights.
+            z_prev (npt.NDArray[complex]): [description]
+            beta (float, optional): Forgetting factor. Defaults to 0.99.
+
+        Returns:
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: [description]
+        """
+        assert 0 < beta < 1
+        y = w_cap_prev.T.conj() @ x
+        h = z_cap_prev @ y
+        g = h / (beta + np.dot(y.conj(), h))
+        g_norm_sq = np.sum(np.abs(g) ** 2)
+        # $\epsilon_var^2$ in the article
+        epsilon_var_sq = np.sum(np.abs(x) ** 2) - np.sum(np.abs(y) ** 2)
+        tau = epsilon_var_sq / (
+            1 + epsilon_var_sq * g_norm_sq + np.sqrt(1 + epsilon_var_sq * g_norm_sq)
+        )
+        eta = 1 - tau * g_norm_sq
+        y_ap = eta * y + tau * g
+        h_ap = z_cap_prev.T.conj() @ y_ap
+        epsilon = (tau / eta) * (z_cap_prev @ g - np.dot(h_ap.conj(), g) * g)
+        # print(h_ap[-3:])
+        z_cap = (1 / beta) * (
+            z_cap_prev - np.outer(g, h_ap.conj()) + np.outer(epsilon, g.conj())
+        )
+        e_ap = eta * x - w_cap_prev @ y_ap
+        w_cap = w_cap_prev + np.outer(e_ap, g.conj())
+        return w_cap, z_cap, e_ap, g
+
+    @staticmethod
+    def track_spectral_weights_tw(
+        x: npt.NDArray[float],
+        w_cap_prev: npt.NDArray[complex],
+        z_cap_prev: npt.NDArray[complex],
+        x_cap_prev: npt.NDArray[float],
+        v_cap_hat_prev: npt.NDArray[complex],
+        beta: float = 0.99,
+    ) -> Tuple[
+        npt.NDArray[complex],
+        npt.NDArray[float],
+        npt.NDArray[complex],
+        npt.NDArray[float],
+        npt.NDArray[complex],
+        npt.NDArray[complex],
+    ]:
+        """[summary]
+
+        Args:
+            x_vec (npt.NDArray[float]): [description]
+            w_cap_prev (npt.NDArray[complex]): [description]
+            z_cap_prev (npt.NDArray[complex]): [description]
+            x_cap_prev (npt.NDArray[float]): Shape (n x l). Previous Hankel matrix.
+            v_cap_hat_prev (npt.NDArray[complex]): [description]
+            beta (float, optional): Forgetting factor. Defaults to 0.99.
+
+        Returns:
+            Tuple[ npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex] ]:
+                ($W$, $Z$, $X$, $\hat{V}$, $e$, $g$)
+        """
+        # Rank of the update involved in equation (4)
+        # p = 2 in the truncated window case.
+        l = x_cap_prev.shape[-1]
+        p = 2
+        j_cap_bar = np.asarray([[1, 0], [0, -(beta**l)]])
+        # Section similar to SW - PAST
+        # Update the $x(t)$ vector
+        x_prev_l = x_cap_prev[:, 0]
+        # n x p matrix
+        x_bar = np.stack((x, x_prev_l), axis=1)
+        # and the $X(t)$ matrix
+        x_cap = np.roll(x_cap_prev, shift=-1, axis=1)
+        x_cap[:, -1] = x
+        # Update the $y(t)$ and $\hat{v}(t-l)$ vectors
+        # n x p matrix
+        y = w_cap_prev.T.conj() @ x
+        v_hat_prev_l = v_cap_hat_prev[:, 0]
+        # and the $Y(t)$ matrix
+        # (there's a mistake in Table II, it is indeed $Y(t)$ and not $\hat{Y}(t)$)
+        y_cap = np.roll(v_cap_hat_prev, shift=-1, axis=1)
+        y_cap[:, -1] = y
+        v_prev_l = w_cap_prev.T.conj() @ x_prev_l
+        #
+        # a n x p matrix actually
+        y_bar_hat = np.stack((y, v_hat_prev_l), axis=1)
+        y_bar = np.stack((y, v_prev_l), axis=1)
+        # an r x p matrix
+        h_bar = z_cap_prev @ y_bar_hat
+        # an r x p matrix
+        g_bar = h_bar @ alg.inv(beta * alg.inv(j_cap_bar) + y_bar.T.conj() @ h_bar)
+        # TW - API main section
+        epsilon_var_bar = alg.sqrtm(x_bar.T.conj() @ x_bar - y_bar.T.conj() @ y_bar)
+        rho_bar = (
+            np.identity(p)
+            + epsilon_var_bar.T.conj() @ (g_bar.T.conj() @ g_bar) @ epsilon_var_bar
+        )
+        # p x p positive definite matrix
+        tau_bar = (
+            epsilon_var_bar
+            @ alg.inv(rho_bar + alg.sqrtm(rho_bar).T.conj())
+            @ epsilon_var_bar.T.conj()
+        )
+        eta_bar = np.identity(p) - (g_bar.T.conj() @ g_bar) @ tau_bar
+        y_bar_ap = y_bar @ eta_bar + g_bar @ tau_bar
+        h_bar_ap = z_cap_prev.T.conj() @ y_bar_ap
+        epsilon_bar = (z_cap_prev @ g_bar - g_bar @ (h_bar_ap.T.conj() @ g_bar)) @ (
+            tau_bar @ alg.inv(eta_bar)
+        ).T.conj()
+        z_cap = (1 / beta) * (
+            z_cap_prev - g_bar @ h_bar_ap.T.conj() + epsilon_bar @ g_bar.T.conj()
+        )
+        # an n x p matrix
+        e_bar_ap = x_bar @ eta_bar - w_cap_prev @ y_bar_ap
+        w_cap = w_cap_prev + e_bar_ap @ g_bar.T.conj()
+        v_cap_hat = y_cap - g_bar @ (g_bar @ tau_bar).T.conj() @ y_cap
+        return w_cap, z_cap, x_cap, v_cap_hat, e_bar_ap, g_bar
+
+
+class Yast:
+    """See Badeau et al., 2008"""
 
     @classmethod
-    def estimate_noise_psd(
+    def track_spectral_weights(
         cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
-        """Estimates the noise's PSD from a temporal signal.
+        x: npt.NDArray[float],
+        w_cap_prev: npt.NDArray[complex],
+        c_cap_xx_prev: npt.NDArray[complex],
+        c_cap_yy_prev: npt.NDArray[complex],
+        track_principal: bool,
+        beta: float = 0.99,
+        nb_it: int = 2,
+        thresh: float = 0.01,
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]:
+        """[summary]
+
+        See Table 1, for the YAST algorithm
 
         Args:
-            x (npt.NDArray[complex]): [description]
-            n_fft (int): Number of frequency bins
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
-            fs (float): Sampling rate
+            x (npt.NDArray[float]): [description]
+            w_prev (npt.NDArray[complex]): [description]
+            c_xx_prev (npt.NDArray[complex]): [description]
+            c_yy_prev (npt.NDArray[complex]): [description]
+            beta (float, optional): Forgetting factor. Defaults to 0.99.
 
         Returns:
-            npt.NDArray[complex]: [description]
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: ($W(t)$, $C_{xx}(t)$, $C_{yy}(t)$)
         """
-        # x: the input signal FOR EACH FREQUENCY BAND
-        # smoothing_ordre: at least two times the length of the PSD's principal lobe (can be done visually)
-        # AR_ordre: ~ 10
-        # note: no need to give it the correct sample frequency,
-        # since it is only used to return the fftfreqs.
-        win_name = "hann"
-        m = n_fft // 2
-        win_width_norm = 2  # for a Hann window
-        win_width = win_width_norm / m
-        # At least twice the bandwidth of the window used in the PSD computation!
-        nu_width = smoothing_factor * 2 * win_width
-        # print(f"width={nu_width * fs} Hz, {nu_width * n_fft} samples")
-        _, x_psd = sig.welch(
-            x, fs=fs, nfft=n_fft, window=win_name, nperseg=m, return_onesided=False
+        y = w_cap_prev.T.conj() @ x
+        e = x - w_cap_prev @ y
+        sigma = alg.norm(e, ord=None)
+        if np.isclose(sigma, 0):
+            # no change from last time
+            return w_cap_prev, c_cap_xx_prev, c_cap_yy_prev
+        u = e / sigma
+        x_ap = c_cap_xx_prev @ x
+        y_ap = c_cap_yy_prev @ y
+        y_apap = w_cap_prev.T.conj() @ x_ap
+        # Added compared to Table 1
+        c_cap_xx = beta * c_cap_xx_prev + x @ x.T.conj()
+        #
+        c_cap_yy_ap = beta * c_cap_yy_prev + y @ y.T.conj()
+        z = beta * (y_apap - y_ap) / sigma + sigma * y
+        gamma = sigma**2 + (beta / sigma**2) * (
+            x.T.conj() @ x_ap - 2 * np.real(y.T.conj() @ y_apap) + y.T.conj() @ y_ap
         )
+        # Filling $\bar{C}_{yy}(t)
+        c_yy_bar = np.empty(c_cap_yy_ap.shape + tuple(np.ones(c_cap_yy_ap.ndim)))
+        c_yy_bar[:-1, :-1] = c_cap_yy_ap
+        c_yy_bar[:-1, -1] = z.T.conj()
+        c_yy_bar[-1, :-1] = z
+        c_yy_bar[-1, -1] = gamma
+        #
+        phi_var_bar, lambd = cls._track_conjugate_gradient(
+            c_cap_yy_ap,
+            c_yy_bar,
+            z,
+            track_principal=track_principal,
+            nb_it=nb_it,
+            thresh=thresh,
+        )
+        # Decomposition of vector phi_bar
+        phi = np.abs(phi_var_bar[-1])
+        assert phi <= 1, "Noooo"
+        theta = phi_var_bar[-1] / phi
+        epsilon = np.sqrt(1 - phi**2)
+        phi_var = phi_var_bar[:-1] / (theta * epsilon)
+        #
+        e_1 = np.zeros_like(phi_var)
+        e_1[0] = 1
+        e_1 = -np.exp(1j * np.angle(phi_var[0])) * e_1
+        #
+        a = (phi_var - e_1) / alg.norm(phi_var - e_1, ord=None)
+        b = w_cap_prev @ a
+        q_cap = w_cap_prev - 2 * b @ a.T.conj() - epsilon * u @ e_1.T.conj()
+        q_1 = q_cap[:, 0]
+        d = np.ones_like(phi_var)
+        d[0] = 1 / alg.norm(q_1, ord=None)
+        d_cap = np.diag(d)
+        w_cap = q_cap @ d_cap
+        #
+        c_cap_yy_ap_a = c_cap_yy_ap @ a
+        a_ap = 4 * (c_cap_yy_ap_a - (a.T.conj() @ c_cap_yy_ap_a) @ a)
+        z_ap = 2 * z - 4 * (a.T.conj() @ z) @ a - epsilon * gamma * e_1
+        #
+        c_cap_yy_apap = c_cap_yy_ap - a_ap @ a.T.conj() - epsilon * z_ap @ e_1.T.conj()
+        c_cap_yy_apap = (c_cap_yy_apap + c_cap_yy_apap.T.conj()) / 2
+        #
+        c_cap_yy = d_cap @ c_cap_yy_apap @ d_cap
+        return w_cap, c_cap_xx, c_cap_yy
 
-        # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
-        noise_psd = cls._estimate_noise_psd(x_psd, nu_width)
-        return noise_psd
-
-    @classmethod
-    def estimate_noise_ar_coeffs(
-        cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        ar_ordre: int = 10,
-        smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
-        """Estimate the coefficients of the filtre generating the coloured noise from a white one.
-
-        Args:
-            x (npt.NDArray[complex]): Input temporal signal, for each frequency band
-            n_fft (int): Number of frequential bins
-            ar_ordre (int): Ordre of the estimated AR filtre. ~ 10?
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
-                At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
-            fs (float): Sampling rate
+    @staticmethod
+    def _track_conjugate_gradient(
+        c_cap_yy_ap: npt.NDArray[complex],
+        c_cap_yy_bar: npt.NDArray[complex],
+        z: npt.NDArray[complex],
+        track_principal: bool,
+        nb_it: int = 1,
+        thresh: float = 0.01,
+    ) -> Tuple[npt.NDArray[complex], complex]:
+        """See Table II, Conjugate Gradient algorithm
 
         Returns:
-            npt.NDArray[complex]: Coefficients of the AR filtre.
+            [type]: [description]
         """
-        noise_psd = cls.estimate_noise_psd(
-            x, n_fft=n_fft, fs=fs, smoothing_factor=smoothing_factor
-        )
-        # Step 3: calculating the autocovariance of the noise
-        # autocovariance (vector) of the noise
-        ac_coeffs = np.real(np.fft.ifft(noise_psd, n=n_fft))
-        # coefficients matrix of the Yule-Walker system
-        # = autocovariance matrix with the last row and last column removed
-        r_mat = alg.toeplitz(ac_coeffs[: ar_ordre - 1], ac_coeffs[: ar_ordre - 1])
-        # the constant column of the Yule-Walker system
-        r = ac_coeffs[1:ar_ordre].T
-        # the AR coefficients (indices 1, ..., N-1)
-        b = -alg.pinv(r_mat) @ r
-        # the AR coefficients (indices 0, ..., N-1)
-        b = np.insert(b, 0, 1)
-        return b
-
-    @classmethod
-    def whiten(
-        cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        ar_ordre: int = 10,
-        smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
-        """Whiten the noise in input temporal signal
-
-        Args:
-            x (npt.NDArray[complex]): Input temporal signal
-            n_fft (int): Number of frequential bins
-            ar_ordre (int): Ordre of the estimated AR filtre
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
-            fs (float): Sampling rate
-
-        Returns:
-            npt.NDArray[complex]: Temporal signal with noise whitened.
-        """
-        b = cls.estimate_noise_ar_coeffs(
-            x, n_fft=n_fft, fs=fs, ar_ordre=ar_ordre, smoothing_factor=smoothing_factor
-        )
-        # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
-        # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
-        # are the coefficients of the AR's denominator, i.e. the array b
-        # denominator coeff of the FIR's transfer function is 1
-        x_whitened = sig.lfilter(b, [1], x)
-        return x_whitened
+        if nb_it is None and thresh is None:
+            thresh = 0.01
+        g = z / alg.norm(z, ord=None)
+        p = c_cap_yy_ap @ g - (g.T.conj() @ c_cap_yy_ap @ g) @ g
+        #
+        s_cap = np.stack((np.zeros_like(g), p / alg.norm(p, ord=None), g), axis=1)
+        s_cap = np.concatenate((s_cap, [1, 0, 0]), axis=0)
+        #
+        c_cap_ys_bar = c_cap_yy_bar @ s_cap
+        c_cap_ss = s_cap.T.conj() @ c_cap_ys_bar
+        assert c_cap_ss.shape == (3, 3)
+        k = 0
+        delta_j_cap = np.inf
+        lambd = None
+        theta = None
+        while (k is None or k < nb_it) and (
+            thresh is None or alg.norm(delta_j_cap) > thresh
+        ):
+            w, vr = alg.eig(c_cap_ss, left=False, right=True)
+            w_norm = arg.norm(w)
+            idx_extr = np.argmax(w_norm) if track_principal else np.argmin(w_norm)
+            theta = w[idx_extr]
+            lambd = vr[idx_extr]
+            #
+            theta_var = np.asarray(
+                [
+                    -alg.norm([theta[1], theta[2]], ord=2),
+                    theta[0].conj()
+                    * (theta[1] / np.abs(theta[1]))
+                    / np.sqrt(1 + np.abs(theta[2] / theta[1]) ** 2),
+                    theta[0].conj()
+                    * (theta[2] / np.abs(theta[2]))
+                    / np.sqrt(1 + np.abs(theta[1] / theta[2]) ** 2),
+                ]
+            )
+            theta_cap = np.stack((theta, theta_var), axis=1)
+            s_cap[:, :2] = s_cap @ theta_cap
+            c_cap_ys_bar[:, :2] = c_cap_ys_bar @ theta_cap
+            c_cap_ss[:2, :2] = theta_cap.T.conj() @ c_cap_ss @ theta_cap
+            delta_j_cap = 2 * (c_cap_ys_bar[:, 0] - lambd * s_cap[:, 1])
+            #
+            g = delta_j_cap / alg.norm(delta_j_cap)
+            g = g - s_cap[:, :2] @ (s_[:, :2].T.conj() @ g)
+            g = g / alg.norm(g)
+            #
+            s_cap[:, 2] = g
+            c_cap_ys_bar[:, 2] = c_cap_yy_bar @ s_cap[:, 2]
+            c_cap_ss[:, 2] = s_cap.T.conj() @ c_ys_var[:, 2]
+            c_cap_ss[2, :] = c_cap_ss[:, 3].T.conj()
+        phi_bar = s_cap[:, 0]
+        return phi_bar, lambd
 
 
 class Ester:
@@ -335,7 +702,7 @@ class Ester:
             1 <= p_max < n - 1
         ), f"Maximum ordre p_max={p_max} should be less than n-1={n-1}."
 
-        w, _ = Esprit.spectral_mats(x, n, p_max)
+        w, _ = Esprit.subspace_weighting_mats(x, n, p_max)
         w_cap = [w[:, :p] for p in range(p_max + 1)]
         #
         # nus are (p)-vecs
@@ -347,7 +714,7 @@ class Ester:
         ksi_cap = [np.zeros((n - 1, p), dtype=w_cap[0].dtype) for p in range(p_max + 1)]
         phi = [np.zeros(p, dtype=w_cap[0].dtype) for p in range(p_max + 1)]
         # norm(e[p]) is always in [0, 1], see original paper
-        e = [np.empty((p, p), dtype=w_cap[0].dtype) for p in range(p_max + 1)]
+        e_cap = [np.empty((p, p), dtype=w_cap[0].dtype) for p in range(p_max + 1)]
         for p in range(1, p_max + 1):
             # Recursive computation of e[p]
             # see Badeau et al. (2006) Table 1 for details on the algorithm
@@ -364,17 +731,17 @@ class Ester:
             psi_l_p = psi_l[p]
             ksi_cap[p][:, :-1] = ksi_cap[p - 1] - np.outer(w_down_p, psi_l_p.conj())
             ksi_cap[p][:, -1] = ksi_p
-            # 3. Computation of e[p] from ksi_cap[p]
+            # 3. Compute e[p] from ksi_cap[p]
             mu_p = nu[p][-1]
             phi[p][:-1] = phi[p - 1] + mu_p * psi_l[p]
             phi[p][-1] = psi_r[p].T.conj() @ nu[p - 1] + mu_p * psi_lr[p].conj()
             w_cap_down_p = w_cap[p][:-1]
-            e[p] = ksi_cap[p] - 1 / (1 - alg.norm(nu[p], ord=None) ** 2) * np.outer(
-                (w_cap_down_p @ nu[p]), phi[p].T.conj()
+            e_cap[p] = ksi_cap[p] - 1 / (1 - np.sum(np.abs(nu[p]) ** 2)) * np.outer(
+                w_cap_down_p @ nu[p], phi[p].T.conj()
             )
         # discard p=0 case (meaningless)
-        e = e[1:]
-        return e
+        e_cap = e_cap[1:]
+        return e_cap
 
     @classmethod
     def inverse_error_func(
@@ -390,14 +757,16 @@ class Ester:
         Returns:
             npt.NDArray[float]: [description]
         """
-        e = cls.error(x, n, p_max)
-        j = np.array([1 / alg.norm(e[p], ord=None) ** 2 for p in range(len(e))])
-        return j
+        e_cap = cls.error(x, n, p_max)
+        j_cap = np.asarray(
+            [1 / alg.norm(e_cap[p], ord=None) ** 2 for p in range(len(e_cap))]
+        )
+        return j_cap
 
     @classmethod
     def estimate_esm_ordre(
         cls, x: npt.NDArray[complex], n: int, p_max: int, thresh_ratio: float = 0.1
-    ) -> npt.NDArray[float]:
+    ) -> int:
         """Gets the estimated ESM model ordre r using the ESTER algorithm.
         see: http://ieeexplore.ieee.org/document/1576975/
 
@@ -416,13 +785,151 @@ class Ester:
         Returns:
             npt.NDArray[float]: [description]
         """
-        j = cls.inverse_error_func(x, n, p_max)
-        j_max = np.amax(j)
+        j_cap = cls.inverse_error_func(x, n, p_max)
+        j_max = np.amax(j_cap)
         # first select peaks in signal
-        j_max_thres_ids, _ = sig.find_peaks(j, height=j_max * thresh_ratio)
+        j_max_thres_ids, _ = sig.find_peaks(j_cap, height=j_max * thresh_ratio)
         # then filter peaks under threshold
-        j_max_ids = sig.argrelextrema(j, np.greater_equal, order=1, mode="clip")[0]
-        j_max_thres_ids = j_max_ids[np.nonzero(j[j_max_ids] >= j_max * thresh_ratio)[0]]
+        j_max_ids = sig.argrelextrema(j_cap, np.greater_equal, order=1, mode="clip")[0]
+        j_max_thres_ids = j_max_ids[
+            np.nonzero(j_cap[j_max_ids] >= j_max * thresh_ratio)[0]
+        ]
         # first index corresponds to p=1, second to p=2 etc.
         r = np.amax(j_max_thres_ids) + 1
         return r
+
+
+class AdaptiveEsprit:
+    """Centralised methods used in the Adaptive ESPRIT framework."""
+
+    @classmethod
+    def estimate_esm(
+        cls,
+        x: npt.NDArray[float],
+        n: int,
+        r: int,
+        l: int = None,
+        log_progress: bool = False,
+    ) -> Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]:
+        """Estimates the complete ESM model using the ESPRIT algorithm.
+
+        Args:
+            x (np.ndarray): input signal
+            n (int): number of lines in the Hankel matrix S
+            k (int): number of searched sinusoids
+
+        Returns:
+            Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]: (EsmModel, Signal spectral matrix, Noise spectral matrix)
+        """
+        if l is None:
+            # With respect to the Cramer-Rao bounds
+            l = (3 * n) // 2
+        n_cap = n + l - 1
+        x_block = x[:n_cap]
+        # FIRST RUN USING CLASSIC ESPRIT
+        w_cap, _ = Esprit.subspace_weighting_mats(x_block, n, r)
+        phi_cap = Esprit.spectral_matrix(w_cap)
+        zs, g_cap = Esprit.estimate_poles(phi_cap)
+        alphas = Esprit.estimate_esm_alphas(x_block, zs)
+        esm = EsmModel.from_complex(zs, alphas)
+        #
+        psi_cap, _ = Esprit.partner_matrices(w_cap)
+        #
+        esm_list = [esm]
+        #
+        # See the various articles for initial values of the matrices
+        # truncated window in the Fapi algorithm
+        # p = 2
+        # w_cap = np.concatenate((np.identity(r), np.zeros((n - r, r))), axis=0)
+        z_cap = np.identity(r)
+        x_cap = alg.hankel(x_block[:n], r=x_block[n - 1 :])
+        v_cap_hat = np.zeros((r, l))
+        # e = np.zeros((n))
+        # g = np.zeros((r))
+        # l samples overlap, step of 1
+        # it = range(1, len(x) - n)
+        nb_blocks = len(x) // n
+        it = range(nb_blocks)
+        if log_progress:
+            it = tqdm.tqdm(it)
+        for j in it:
+            idx_start = j * n
+            idx_stop = (j + 1) * n
+            x_block = x[idx_start:idx_stop]
+            w_cap_prev = w_cap
+            z_cap_prev = z_cap
+            w_cap, z_cap, e, g = Fapi.track_spectral_weights(
+                x_block, w_cap_prev, z_cap_prev, beta=0.99
+            )
+            print(np.max(np.abs(z_cap)))
+            """
+            phi_cap, psi_cap, _, _ = MiscAdaptiveTracking.track_spectral_matrix_fae(
+                e, g, w_cap, w_cap_prev, psi_cap, phi_cap
+            )
+            w_cap_id = w_cap.T.conj() @ w_cap
+            w_cap_err = alg.norm(np.identity(r) - w_cap_id)
+            # print(w_cap_err)
+            zs, g_cap = Hrhatrac.track_poles(phi_cap, zs, g_cap)
+            hey = np.max(np.abs(z_cap))
+            # i_just_met_you = np.max(np.abs(zs))
+            # _, and_this_is_crazy = EsmModel.poles_to_dampfreq(zs)
+            # and_this_is_crazy = np.mean(np.abs(and_this_is_crazy))
+            # print( "{:.2f} | {:.2f} | {:.2f}".format( hey, i_just_met_you, and_this_is_crazy))
+            # The poles change at each step so the adaptive LS algorithm can't be used here.
+            alphas = Esprit.estimate_esm_alphas(x_block, zs)
+            #
+            esm = EsmModel.from_complex(zs, alphas)
+            # print(esm.nus * sr)
+            #
+            esm_list.append(esm)
+            """
+        esm_adapt = BlockEsmModel(esm_list)
+        return esm_adapt
+
+
+if __name__ == "__main__":
+    sr = 4410
+    n_s = 80000
+    # number of sinusoids
+    r = 8
+    # adaptive stuff
+    nb_blocks = 1
+    l_block = n_s // nb_blocks
+    # logging
+    # log_progress = True
+    log_progress = False
+    # ESPRIT params
+    n = 32
+    l = (3 * n) // 2
+
+    # Normalised damping ratios, multiply by sampling rate to get the 'deltas' in Amp.s-1
+    gammas_list = np.repeat(rng.normal(0.002, 0.0001, (nb_blocks, r)), l_block, axis=0)
+    # Normalised frequencies
+    nus_list = np.repeat(rng.normal(0.1, 0.05, (nb_blocks, r)), l_block, axis=0)
+    amps_list = np.repeat(rng.uniform(0.1, 1, (nb_blocks, r)), l_block, axis=0)
+    phis_list = np.repeat(rng.uniform(0, 2 * np.pi, (nb_blocks, r)), l_block, axis=0)
+    # Normalised damping ratios, multiply by sampling rate to get the 'deltas' in Amp.s-1
+    gammas = rng.uniform(0.001, 0.01, r)
+    # Normalised frequencies
+    nus = rng.normal(0.1, 0.05, r)
+    amps = rng.uniform(0.1, 1, r)
+    phis = rng.uniform(0, 2 * np.pi, r)
+
+    x_esm_adapt = BlockEsmModel.from_param_lists(
+        gammas_list, nus_list, amps_list, phis_list
+    )
+    x_esm = EsmModel(gammas, nus, amps, phis)
+
+    # one sample per value
+    x_sine = x_esm.synth(n_s)
+    x_sine = np.real(x_sine)
+    wav.write("aaaa", data=np.real(x_sine) / np.max(np.real(x_sine)), rate=sr)
+
+    x_esm_est = AdaptiveEsprit.estimate_esm(x_sine, n, r, l, log_progress=log_progress)
+
+    # print(x_esm.nus[0] * sr)
+    # print(x_esm_est.nus[0] * sr)
+    # print(x_esm.gammas * sr)
+    # print(x_esm_est.gammas * sr)
+
+    # x_sine_est = x_esm_est.synth(n_s_block)

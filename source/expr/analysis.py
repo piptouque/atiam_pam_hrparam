@@ -148,15 +148,17 @@ def perform_analysis(
         fs=sr,
         n_esprit=conf.hr.esprit.n,
         p_max_ester=conf.hr.ester.p_max,
+        thresh_ratio_ester=conf.hr.ester.thresh_ratio,
         n_fft_noise=conf.hr.whitening.n_fft,  # TODO: set according to data -> excit, acc, etc.
         smoothing_factor_noise=conf.hr.whitening.smoothing_factor,
+        quantile_ratio_noise=conf.hr.whitening.quantile_ratio,
     )
-    esm_excit_win, w_excit_win, w_per_excit_win, white_excit_win = decomp.perform(
+    esm_excit_win, white_excit_win = decomp.perform(
         data_excit_win
     )
-    esm_acc_win, w_acc_win, w_per_acc_win, white_acc_win = decomp.perform(data_acc_win)
-    esm_mic_win, w_mic_win, w_per_mic_win, white_mic_win = decomp.perform(data_mic_win)
-    esm_imp_win, w_imp_win, w_per_imp_win, white_imp_win = decomp.perform(imp_win)
+    esm_acc_win, white_acc_win = decomp.perform(data_acc_win)
+    esm_mic_win, white_mic_win = decomp.perform(data_mic_win)
+    esm_imp_win, white_imp_win = decomp.perform(imp_win)
     # Also compute the spectra of the signals with whitened noise.
     ft_excit_white = np.fft.fft(white_excit_win, n=n_fft)
     ft_acc_white = np.fft.fft(white_acc_win, n=n_fft)
@@ -203,33 +205,25 @@ def perform_analysis(
         "excit": {
             "win": {
                 "esm": esm_excit_win,
-                "w": w_excit_win,
-                "w_per": w_per_excit_win,
-                "white": white_excit_win,
+                "white": white_excit_win
             }
         },
         "acc": {
             "win": {
                 "esm": esm_acc_win,
-                "w": w_acc_win,
-                "w_per": w_per_acc_win,
-                "white": white_acc_win,
+                "white": white_acc_win
             }
         },
         "mic": {
             "win": {
                 "esm": esm_mic_win,
-                "w": w_mic_win,
-                "w_per": w_per_mic_win,
-                "white": white_mic_win,
+                "white": white_mic_win
             }
         },
         "imp": {
             "win": {
                 "esm": esm_imp_win,
-                "w": w_imp_win,
-                "w_per": w_per_imp_win,
-                "white": white_imp_win,
+                "white": white_imp_win
             }
         },
     }
@@ -508,6 +502,7 @@ def save_analysis(
     )
     #
     sr = data["sr"]
+    data_excit = data["temporal"]["mic"]["whole"]
     data_mic = data["temporal"]["mic"]["whole"]
     data_acc = data["temporal"]["acc"]["whole"]
     imp = data["temporal"]["imp"]["whole"]
@@ -545,6 +540,14 @@ def save_analysis(
     output_audio_path.mkdir(parents=True, exist_ok=True)
     output_spreadsheet_path.mkdir(parents=True, exist_ok=True)
     # audio
+    wav.write(
+        output_audio_path / "excit.wav", sr, data_excit / np.amax(np.abs(data_excit))
+    )
+    wav.write(
+        output_audio_path / "excit_win.wav",
+        sr,
+        data_excit_win / np.amax(np.abs(data_excit_win)),
+    )
     wav.write(output_audio_path / "mic.wav", sr, data_mic / np.amax(np.abs(data_mic)))
     wav.write(
         output_audio_path / "mic_win.wav", sr, data_mic / np.amax(np.abs(data_mic_win))

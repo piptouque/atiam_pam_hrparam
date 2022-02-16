@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Test: Subspace tracking",
+            "type": "python",
+            "request": "launch",
+            "module": "source.hr.process",
+            "console": "integratedTerminal"
+        },
+        {
             "name": "Test: Guitar String",
             "type": "python",
             "request": "launch",
