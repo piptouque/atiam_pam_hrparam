@@ -1,5 +1,6 @@
 from typing import Tuple, List, Union
 
+import scipy.io.wavfile as wav
 import scipy.linalg as alg
 import scipy.signal as sig
 import scipy.ndimage as img
@@ -10,8 +11,8 @@ rng = np.random.default_rng(123)
 import numpy.typing as npt
 
 
-from source.hr.esm import EsmModel, AdaptiveEsmModel
-from source.hr.preprocess import NoiseWhitening, FiltreBank
+from hr.esm import EsmModel, AdaptiveEsmModel
+from hr.preprocess import NoiseWhitening, FiltreBank
 
 
 class Esprit:
@@ -30,7 +31,7 @@ class Esprit:
         """
         x_cap = alg.hankel(x[:n], r=x[n - 1 :])
         l = x.shape[-1] - n + 1
-        return x_cap @ x_cap.transpose().conj() / l
+        return x_cap @ x_cap.T.conj() / l
 
     @classmethod
     def subspace_weighting_mats(
@@ -126,7 +127,7 @@ class Esprit:
         ts = np.arange(len(x))
         # Vandermonde matrix of dimension N
         v_mat = np.exp(np.outer(ts, log_zs))
-        alphas = alg.pinv(v_mat) @ x
+        alphas = np.dot(alg.pinv(v_mat), x)
         return alphas
 
     @classmethod
@@ -353,11 +354,11 @@ class Fapi:
     def track_spectral_weights(
         x: npt.NDArray[float],
         w_cap_prev: npt.NDArray[complex],
-        z_cap_prev: npt.NDArray[float],
+        z_cap_prev: npt.NDArray[complex],
         beta: float = 0.99,
     ) -> Tuple[
         npt.NDArray[complex],
-        npt.NDArray[float],
+        npt.NDArray[complex],
         npt.NDArray[complex],
         npt.NDArray[complex],
     ]:
@@ -366,20 +367,19 @@ class Fapi:
         Args:
             x (npt.NDArray[float]): (n)-dimensional vector
             w_prev (npt.NDArray[complex]): (n, r) matrix. Spectral weights.
-            z_prev (npt.NDArray[float]): [description]
+            z_prev (npt.NDArray[complex]): [description]
             beta (float, optional): Forgetting factor. Defaults to 0.99.
 
         Returns:
-            Tuple[npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex]]: [description]
+            Tuple[npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex], npt.NDArray[complex]]: [description]
         """
         assert 0 < beta < 1
         y = w_cap_prev.T.conj() @ x
         h = z_cap_prev @ y
-        g_denom = beta + np.dot(y.conj(), h)
-        g = h / g_denom
-        # $\epsilon^2$ in the article
-        epsilon_var_sq = np.sum(np.abs(x) ** 2) - np.sum(np.abs(y) ** 2)
+        g = h / (beta + np.dot(y.conj(), h))
         g_norm_sq = np.sum(np.abs(g) ** 2)
+        # $\epsilon_var^2$ in the article
+        epsilon_var_sq = np.sum(np.abs(x) ** 2) - np.sum(np.abs(y) ** 2)
         tau = epsilon_var_sq / (
             1 + epsilon_var_sq * g_norm_sq + np.sqrt(1 + epsilon_var_sq * g_norm_sq)
         )
@@ -387,17 +387,9 @@ class Fapi:
         y_ap = eta * y + tau * g
         h_ap = z_cap_prev.T.conj() @ y_ap
         epsilon = (tau / eta) * (z_cap_prev @ g - np.dot(h_ap.conj(), g) * g)
+        # print(h_ap[-3:])
         z_cap = (1 / beta) * (
             z_cap_prev - np.outer(g, h_ap.conj()) + np.outer(epsilon, g.conj())
-        )
-        hey = np.max(np.abs(z_cap))
-        i_just_met_you = np.max(np.abs(g))
-        and_this_is_crazy = np.max(np.abs(np.outer(g, h_ap.conj())))
-        so_here_s_my_number = np.max(np.abs(np.outer(epsilon, g.conj())))
-        print(
-            "{:.2f} | {:.2f} | {:.2f} | {:.2f}".format(
-                hey, i_just_met_you, and_this_is_crazy, so_here_s_my_number
-            )
         )
         e_ap = eta * x - w_cap_prev @ y_ap
         w_cap = w_cap_prev + np.outer(e_ap, g.conj())
@@ -433,9 +425,6 @@ class Fapi:
             Tuple[ npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[float], npt.NDArray[complex], npt.NDArray[complex] ]:
                 ($W$, $Z$, $X$, $\hat{V}$, $e$, $g$)
         """
-        w_cap_prev = w_cap_prev.astype(complex)
-        z_cap_prev = z_cap_prev.astype(complex)
-        v_cap_hat_prev = v_cap_hat_prev.astype(complex)
         # Rank of the update involved in equation (4)
         # p = 2 in the truncated window case.
         l = x_cap_prev.shape[-1]
@@ -816,32 +805,42 @@ class AdaptiveEsprit:
         #
         # See the various articles for initial values of the matrices
         # truncated window in the Fapi algorithm
-        p = 2
+        # p = 2
+        # w_cap = np.concatenate((np.identity(r), np.zeros((n - r, r))), axis=0)
         z_cap = np.identity(r)
         x_cap = alg.hankel(x_block[:n], r=x_block[n - 1 :])
         v_cap_hat = np.zeros((r, l))
-        e = np.zeros((n, p))
-        g = np.zeros((r, p))
+        # e = np.zeros((n))
+        # g = np.zeros((r))
         # l samples overlap, step of 1
-        it = range(1, len(x) - l)
+        # it = range(1, len(x) - n)
+        nb_blocks = len(x) // n
+        it = range(nb_blocks)
         if log_progress:
             it = tqdm.tqdm(it)
         for j in it:
-            x_block = x[j : j + n]
+            idx_start = j * n
+            idx_stop = (j + 1) * n
+            x_block = x[idx_start:idx_stop]
             w_cap_prev = w_cap
             z_cap_prev = z_cap
             w_cap, z_cap, e, g = Fapi.track_spectral_weights(
-                x_block, w_cap_prev, z_cap_prev
+                x_block, w_cap_prev, z_cap_prev, beta=0.99
             )
+            print(np.max(np.abs(z_cap)))
+            """
             phi_cap, psi_cap, _, _ = MiscAdaptiveTracking.track_spectral_matrix_fae(
                 e, g, w_cap, w_cap_prev, psi_cap, phi_cap
             )
-            noo = alg.norm(phi_cap)
-            # print(noo)
             w_cap_id = w_cap.T.conj() @ w_cap
             w_cap_err = alg.norm(np.identity(r) - w_cap_id)
             # print(w_cap_err)
             zs, g_cap = Hrhatrac.track_poles(phi_cap, zs, g_cap)
+            hey = np.max(np.abs(z_cap))
+            # i_just_met_you = np.max(np.abs(zs))
+            # _, and_this_is_crazy = EsmModel.poles_to_dampfreq(zs)
+            # and_this_is_crazy = np.mean(np.abs(and_this_is_crazy))
+            # print( "{:.2f} | {:.2f} | {:.2f}".format( hey, i_just_met_you, and_this_is_crazy))
             # The poles change at each step so the adaptive LS algorithm can't be used here.
             alphas = Esprit.estimate_esm_alphas(x_block, zs)
             #
@@ -849,17 +848,18 @@ class AdaptiveEsprit:
             # print(esm.nus * sr)
             #
             esm_list.append(esm)
+            """
         esm_adapt = AdaptiveEsmModel(esm_list)
         return esm_adapt
 
 
 if __name__ == "__main__":
     sr = 4410
-    n_s = 8000
+    n_s = 80000
     # number of sinusoids
     r = 8
     # adaptive stuff
-    nb_blocks = 10
+    nb_blocks = 1
     l_block = n_s // nb_blocks
     # logging
     # log_progress = True
@@ -874,13 +874,22 @@ if __name__ == "__main__":
     nus_list = np.repeat(rng.normal(0.1, 0.05, (nb_blocks, r)), l_block, axis=0)
     amps_list = np.repeat(rng.uniform(0.1, 1, (nb_blocks, r)), l_block, axis=0)
     phis_list = np.repeat(rng.uniform(0, 2 * np.pi, (nb_blocks, r)), l_block, axis=0)
+    # Normalised damping ratios, multiply by sampling rate to get the 'deltas' in Amp.s-1
+    gammas = rng.uniform(0.001, 0.01, r)
+    # Normalised frequencies
+    nus = rng.normal(0.1, 0.05, r)
+    amps = rng.uniform(0.1, 1, r)
+    phis = rng.uniform(0, 2 * np.pi, r)
 
-    x_esm = AdaptiveEsmModel.from_param_lists(
+    x_esm_adapt = AdaptiveEsmModel.from_param_lists(
         gammas_list, nus_list, amps_list, phis_list
     )
+    x_esm = EsmModel(gammas, nus, amps, phis)
 
     # one sample per value
-    x_sine = x_esm.synth(1)
+    x_sine = x_esm.synth(n_s)
+    x_sine = np.real(x_sine)
+    wav.write("aaaa", data=np.real(x_sine) / np.max(np.real(x_sine)), rate=sr)
 
     x_esm_est = AdaptiveEsprit.estimate_esm(x_sine, n, r, l, log_progress=log_progress)
 
