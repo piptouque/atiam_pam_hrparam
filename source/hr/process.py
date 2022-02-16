@@ -11,7 +11,7 @@ rng = np.random.default_rng(123)
 import numpy.typing as npt
 
 
-from hr.esm import EsmModel, AdaptiveEsmModel
+from hr.esm import EsmModel, BlockEsmModel
 from hr.preprocess import NoiseWhitening, FiltreBank
 
 
@@ -153,6 +153,40 @@ class Esprit:
         #
         esm = EsmModel.from_complex(zs, alphas)
         return esm
+
+
+class BlockEsprit:
+    """Esprit by block: non adaptive"""
+
+    @classmethod
+    def estimate_esm(
+        cls,
+        x: npt.NDArray[float], n: int, r: int, l_win: int, step: int
+    ) -> BlockEsmModel:
+        """Computes `esprit` and `least_square` by blocks.
+
+        Arguments:
+            sig (npt.NDArray[float]): the full-length input signal
+            n (int): number of lines in the Hankel matrix S
+            r (int): signal space dimension = number of sinusoids (n-K: noise space dimension)
+            l_win (int): the window size (in samples)
+            step (int): the hop size (in samples)
+        Returns:
+        """
+        # the length of the signal (in samples)
+        n_cap = len(x)
+        nb_blocks = (n_cap - l_win) // step + 1
+        x_esm_list = []
+        for i in range(nb_blocks):
+            idx_start = step * i
+            idx_stop = step * i + l_win
+            # ith truncated signal
+            x_block = x[idx_start:idx_stop]
+
+            x_esm = Esprit.estimate_esm(x, n, r)
+            x_esm_list.append(x_esm)
+        x_esm = BlockEsmModel(x_esm_list)
+        return x_esm
 
 
 class MiscAdaptiveTracking:
@@ -849,7 +883,7 @@ class AdaptiveEsprit:
             #
             esm_list.append(esm)
             """
-        esm_adapt = AdaptiveEsmModel(esm_list)
+        esm_adapt = BlockEsmModel(esm_list)
         return esm_adapt
 
 
@@ -881,7 +915,7 @@ if __name__ == "__main__":
     amps = rng.uniform(0.1, 1, r)
     phis = rng.uniform(0, 2 * np.pi, r)
 
-    x_esm_adapt = AdaptiveEsmModel.from_param_lists(
+    x_esm_adapt = BlockEsmModel.from_param_lists(
         gammas_list, nus_list, amps_list, phis_list
     )
     x_esm = EsmModel(gammas, nus, amps, phis)

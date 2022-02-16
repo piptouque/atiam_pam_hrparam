@@ -212,9 +212,9 @@ class EsmModel:
         return x_synth, snr
 
 
-class AdaptiveEsmModel:
+class BlockEsmModel:
     """
-    Adaptive ESM model
+    Adaptive/Block ESM model
     """
 
     def __init__(self, esm_list: List[EsmModel]) -> None:

@@ -77,14 +77,14 @@ def synthesize(
             -(1 / 20)
             * (
                 sin_to_noise
-                + 10 * np.log10(np.sum(noise ** 2))
+                + 10 * np.log10(np.sum(noise**2))
                 - 10 * np.log10(np.sum(np.real(sinusoids) ** 2))
             )
         )
         noise = norm * noise
         sig = sinusoids + noise
         snr = 10 * np.log10(np.sum(np.real(sig) ** 2)) - 10 * np.log10(
-            np.sum(noise ** 2)
+            np.sum(noise**2)
         )
 
     return sig, sinusoids, noise, snr
@@ -121,16 +121,7 @@ def preemphasize(sig: np.ndarray, b=np.array([1, -0.95])):
 def filter_bank(
     num_bands: int, fs: int, filter_length: int = 425, trans_width: int = 425
 ):
-    """
-    Create a filter bank with Remez' algotithm.
-
-    Parameters
-    ----------
-    `sig`: input signal
-    `num_bands`: number of sub-bands
-    `fs`: sampling rate
-    `filter_length`: number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well)
-    `trans_width`: transition width (in Hz)
+    """Create a filter bank with Remez' algotithm.  Parameters ---------- `sig`: input signal `num_bands`: number of sub-bands `fs`: sampling rate `filter_length`: number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well) `trans_width`: transition width (in Hz)
 
     Return
     ------
