@@ -1,8 +1,8 @@
 {
-    "python.linting.pylintEnabled": true,
-    "python.linting.enabled": true,
-    "editor.formatOnSave": true,
-    "editor.formatOnType": true,
-    "python.formatting.provider": "black",
-    "python.linting.pycodestyleEnabled": false
+  "python.linting.pylintEnabled": true,
+  "python.linting.enabled": true,
+  "editor.formatOnSave": true,
+  "editor.formatOnType": true,
+  "python.formatting.provider": "black",
+  "python.linting.pycodestyleEnabled": false
 }

@@ -109,8 +109,7 @@ def preemphasize(sig: np.ndarray, b=np.array([1, -0.95])):
     N = len(sig)
     Nfft = nextpow2(N)
 
-    a = np.ones(2)
-    preemph_sig = signal.lfilter(b, a, sig)
+    preemph_sig = signal.lfilter(b, [1], sig)
 
     freq, psd_sig = signal.welch(sig, nfft=Nfft)
     _, psd_preemph_sig = signal.welch(preemph_sig, nfft=Nfft)
@@ -195,7 +194,7 @@ def decimate(sig: np.ndarray, factor: int):
     `decimated`: decimated signal
     """
     N = len(sig)
-    decimated = np.zeros(N // factor)
+    decimated = np.zeros(N // factor, dtype=sig.dtype)
 
     for i in range(len(decimated)):
         decimated[i] = sig[i * factor]
@@ -219,9 +218,10 @@ def whiten(sig: np.ndarray, smoothing_order: int, rank: int, ar_order: int):
     `sig_white`: the filtered signal
     `freq`: frequencies for the PSD's
     `psd_sig`: PSD of the input signal
-    `psd_noise`: Estimation of the colored noise PSD
+    `psd_noise`: estimation of the colored noise PSD
     `psd_sig_white`: PSD of the filtered signal
-    `psd_noise_white`: Estimatiobn of the white noise PSD
+    `psd_noise_white`: estimatiobn of the white noise PSD
+    `AR_coeffs`: autoregressive model coefficients = FIR filter coefficients
     """
     N = len(sig)
     Nfft = nextpow2(N)
@@ -243,14 +243,14 @@ def whiten(sig: np.ndarray, smoothing_order: int, rank: int, ar_order: int):
     )  # coefficients matrix of the Yule-Walker system
     # = autocovariance matrix with the last row and last column removed
     r = AC[1:ar_order].T  # the constant column of the Yule-Walker system
-    B = -pinv(R) @ r  # the AR coefficients (indices 1, ..., N-1)
-    B = np.insert(B, 0, 1)  # the AR coefficients (indices 0, ..., N-1)
+    AR_coeffs = -pinv(R) @ r  # the AR coefficients (indices 1, ..., N-1)
+    AR_coeffs = np.insert(AR_coeffs, 0, 1)  # the AR coefficients (indices 0, ..., N-1)
 
     # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
     # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
     # are the coefficients of the AR's denominator, i.e. the array B
     # denominator co-eff of the FIR's transfer function is 1
-    sig_white = signal.lfilter(B, [1], sig)
+    sig_white = signal.lfilter(AR_coeffs, [1], sig)
 
     # Step 5: re-estimating the noise, now for the white signal
     _, psd_sig_white = signal.welch(sig_white, nfft=Nfft)
@@ -259,7 +259,15 @@ def whiten(sig: np.ndarray, smoothing_order: int, rank: int, ar_order: int):
         psd_sig_white, smoothing_order // rank, smoothing_order
     )
 
-    return sig_white, freq, psd_sig, psd_noise, psd_sig_white, psd_noise_white
+    return (
+        sig_white,
+        freq,
+        psd_sig,
+        psd_noise,
+        psd_sig_white,
+        psd_noise_white,
+        AR_coeffs,
+    )
 
 
 def esprit(sig: np.ndarray, n: int, K: int):
