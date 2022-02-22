@@ -39,7 +39,7 @@
         "esprit": {
             "n": 348,
             "clip_damp": true,
-            "clip_freq": true
+            "discard_freq": true
         },
         "whitening": {
             "n_fft": 1024,

@@ -20,7 +20,7 @@ class EsmSubspaceDecomposer:
         quantile_ratio_noise: float = 1 / 3,
         ar_order_noise: int = 10,
         thresh_ratio_ester: float = 0.1,
-        clip_freq: bool = False,
+        discard_freq: bool = False,
         clip_damp: bool = False,
     ) -> None:
 
@@ -37,7 +37,7 @@ class EsmSubspaceDecomposer:
         self.thresh_ratio_ester = thresh_ratio_ester
         #
         self.clip_damp = clip_damp
-        self.clip_freq = clip_freq
+        self.discard_freq = discard_freq
 
     def perform(
         self, x: npt.NDArray[complex]
@@ -79,7 +79,7 @@ class EsmSubspaceDecomposer:
             self.n_esprit,
             r,
             clip_damp=self.clip_damp,
-            clip_freq=self.clip_freq,
+            discard_freq=self.discard_freq,
         )
 
         x_noise = Esprit.estimate_noise(x, self.n_esprit, r)

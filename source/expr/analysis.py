@@ -154,7 +154,7 @@ def perform_analysis(
         smoothing_factor_noise=conf.hr.whitening.smoothing_factor,
         quantile_ratio_noise=conf.hr.whitening.quantile_ratio,
         clip_damp=conf.hr.esprit.clip_damp,
-        clip_freq=conf.hr.esprit.clip_freq,
+        discard_freq=conf.hr.esprit.discard_freq,
     )
     esm_excit_win, noise_excit_win, white_excit_win = decomp.perform(data_excit_win)
     esm_acc_win, noise_acc_win, white_acc_win = decomp.perform(data_acc_win)

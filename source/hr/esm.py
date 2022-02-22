@@ -57,7 +57,7 @@ class EsmModel:
         zs: npt.NDArray[complex],
         alphas: npt.NDArray[complex],
         clip_damp: bool = False,
-        clip_freq: bool = False,
+        discard_freq: bool = False,
     ) -> object:
         """Makes an ESM model given complex poles and comples amplitudes
 
@@ -65,13 +65,13 @@ class EsmModel:
             zs (npt.NDArray[complex]): [description]
             alphas (npt.NDArray[complex]): [description]
             clip_damp (bool, optional): Floors the normalised damping factors to non-negative values. Defaults to False.
-            clip_freq (bool, optional): Clips the normalised frequencies in the [-0.5, 0.5] range. Defaults to False.
+            discard_freq (bool, optional): Clips the normalised frequencies in the [-0.5, 0.5] range. Defaults to False.
 
         Returns:
             EsmModel: [description]
         """
         gammas, nus = cls.poles_to_dampfreq(
-            zs, clip_damp=clip_damp, clip_freq=clip_freq
+            zs, clip_damp=clip_damp, discard_freq=discard_freq
         )
         amps, phis = cls.alphas_to_ampphase(alphas)
         return cls(gammas, nus, amps, phis)
@@ -81,7 +81,7 @@ class EsmModel:
         cls,
         zs: npt.NDArray[complex],
         clip_damp: bool = False,
-        clip_freq: bool = False,
+        discard_freq: bool = False,
     ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
         """Computes the normalised damping factors and frequencies from the complex poles.
 
@@ -95,7 +95,7 @@ class EsmModel:
         Args:
             zs (npt.NDArray[complex]): [description]
             clip_damp (bool, optional): Floors the normalised damping factors to non-negative values. Defaults to False.
-            clip_freq (bool, optional): Clips the normalised frequencies in the [-0.5, 0.5] range. Defaults to False.
+            discard_freq (bool, optional): Clips the normalised frequencies in the [-0.5, 0.5] range. Defaults to False.
 
 
         Returns:
@@ -106,7 +106,7 @@ class EsmModel:
         gammas = -np.log(np.abs(zs))
         nus = np.angle(zs) / (2 * np.pi)  # frequencies
         gammas, nus = cls._fix_dampfreq(
-            gammas, nus, clip_damp=clip_damp, discard_freq=clip_freq
+            gammas, nus, clip_damp=clip_damp, discard_freq=discard_freq
         )
         return gammas, nus
 
