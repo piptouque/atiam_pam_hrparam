@@ -104,13 +104,69 @@ class EsmModel:
         # DAMPING RATIOS AND FREQUENCIES
         # damping factors
         gammas = -np.log(np.abs(zs))
+        nus = np.angle(zs) / (2 * np.pi)  # frequencies
+        gammas, nus = cls._fix_dampfreq(
+            gammas, nus, clip_damp=clip_damp, discard_freq=clip_freq
+        )
+        return gammas, nus
+
+    @classmethod
+    def fix_poles(
+        cls, zs: npt.NDArray[complex], clip_damp: bool = True, discard_freq: bool = True
+    ) -> npt.NDArray[complex]:
+        """Corrects the poles to get appropriate damping factors (which should be in positive),
+        and frequencies (which should be in [-0.5, 0.5])
+
+        Args:
+            zs (npt.NDArray[complex]): Complex poles
+            clip_damp (bool, optional): Clips damping factors to [0, +inf[. Defaults to False.
+            discard_freq (bool, optional): Discard poles whose estimated frequency is not in [-0.5, 0.5]. Defaults to False.
+
+        Returns:
+            npt.NDArray[complex]: 'Fixed' complex poles
+        """
+        gammas = -np.log(np.abs(zs))
+        nus = np.angle(zs) / (2 * np.pi)  # frequencies
+        gammas, nus = cls._fix_dampfreq(
+            gammas, nus, clip_damp=clip_damp, discard_freq=discard_freq
+        )
+        zs = np.exp(-gammas + 2j * np.pi * nus)
+        return zs
+
+    @staticmethod
+    def _fix_dampfreq(
+        gammas: npt.NDArray[float],
+        nus: npt.NDArray[float],
+        clip_damp: bool = False,
+        discard_freq: bool = False,
+    ) -> Tuple[npt.NDArray[float], npt.NDArray[float]]:
+        """Corrects the damping factors and frequencies to get appropriate damping factors (which should be in positive),
+        and frequencies (which should be in [-0.5, 0.5])
+
+        Args:
+            gammas (npt.NDArray[float]): Normalised damping factors
+            nus (npt.NDArray[float]): Normalised frequencies
+            clip_damp (bool, optional): Clips damping factors to [0, +inf[. Defaults to False.
+            discard_freq (bool, optional): Discard poles whose estimated frequency is not in [-0.5, 0.5]. Defaults to False.
+
+        Returns:
+
+        Returns:
+            Tuple[npt.NDArray[float], npt.NDArray[float]]: ('Fixed' normalised damping factors, 'Fixed' normalised frequencies)
+        """
         if clip_damp:
             gammas = np.maximum(0, gammas)
-        nus = np.angle(zs) / (2 * np.pi)  # frequencies
-        if clip_freq:
+        if discard_freq:
             # Normalised frequencies should
             # be in the [-0.5, 0.5] range.
-            nus = np.clip(nus, -0.5, 0.5)
+            # Discard both frequency and damping if that's not the case
+            ids_good = np.logical_and(-0.5 <= nus, nus <= 0.5)
+            if not np.all(ids_good):
+                print(nus)
+            gammas = gammas[ids_good]
+            nus = nus[ids_good]
+            if not np.all(ids_good):
+                print(nus)
         return gammas, nus
 
     @classmethod

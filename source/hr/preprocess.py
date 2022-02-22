@@ -38,8 +38,8 @@ class NoiseWhitening:
         """Estimates the noise's PSD with a median filter (smoothing the signal's PSD)
         Args:
             x_psd (npt.NDArray[complex]): [description]
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            nu_width (float): Width ratio for the rank filtre, in normalised frequency (in [0, 1]).
+            quantile_ratio (float): rank of the rank filter as a ratio of the width of the filter (in [0, 1]).
+            nu_width (float): Width ratio for the rank filter, in normalised frequency (in [0, 1]).
 
         Returns:
             npt.NDArray[complex]: Estimated PSD of the noise.
@@ -66,15 +66,15 @@ class NoiseWhitening:
             x (npt.NDArray[complex]): [description]
             n_fft (int): Number of frequency bins
             fs (float): Sampling rate
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            quantile_ratio (float): rank of the rank filter as a ratio of the width of the filter (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filter used in noise PSD estimation, in window width.
 
         Returns:
             npt.NDArray[complex]: [description]
         """
         # x: the input signal FOR EACH FREQUENCY BAND
-        # smoothing_ordre: at least two times the length of the PSD's principal lobe (can be done visually)
-        # AR_ordre: ~ 10
+        # smoothing_order: at least two times the length of the PSD's principal lobe (can be done visually)
+        # AR_order: ~ 10
         # note: no need to give it the correct sample frequency,
         # since it is only used to return the fftfreqs.
         win_name = "hann"
@@ -88,7 +88,7 @@ class NoiseWhitening:
             x, fs=fs, nfft=n_fft, window=win_name, nperseg=m, return_onesided=False
         )
 
-        # Step 2: estimating the noise's PSD with a median filtre (smoothing the signal's PSD)
+        # Step 2: estimating the noise's PSD with a median filter (smoothing the signal's PSD)
         noise_psd = cls._estimate_noise_psd(
             x_psd, quantile_ratio=quantile_ratio, nu_width=nu_width
         )
@@ -100,23 +100,23 @@ class NoiseWhitening:
         x: npt.NDArray[complex],
         n_fft: int,
         fs: float = 1,
-        ar_ordre: int = 10,
+        ar_order: int = 10,
         quantile_ratio: float = 1 / 3,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
-        """Estimate the coefficients of the filtre generating the coloured noise from a white one.
+        """Estimate the coefficients of the filter generating the coloured noise from a white one.
 
         Args:
             x (npt.NDArray[complex]): Input temporal signal, for each frequency band
             n_fft (int): Number of frequential bins
             fs (float): Sampling rate
-            ar_ordre (int): Ordre of the estimated AR filtre. ~ 10?
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            ar_order (int): order of the estimated AR filter. ~ 10?
+            quantile_ratio (float): rank of the rank filter as a ratio of the width of the filter (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filter used in noise PSD estimation, in window width.
                 At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
 
         Returns:
-            npt.NDArray[complex]: Coefficients of the AR filtre.
+            npt.NDArray[complex]: Coefficients of the AR filter.
         """
         noise_psd = cls.estimate_noise_psd(
             x,
@@ -130,9 +130,9 @@ class NoiseWhitening:
         ac_coeffs = np.real(np.fft.ifft(noise_psd, n=n_fft))
         # coefficients matrix of the Yule-Walker system
         # = autocovariance matrix with the last row and last column removed
-        r_mat = alg.toeplitz(ac_coeffs[: ar_ordre - 1], ac_coeffs[: ar_ordre - 1])
+        r_mat = alg.toeplitz(ac_coeffs[: ar_order - 1], ac_coeffs[: ar_order - 1])
         # the constant column of the Yule-Walker system
-        r = ac_coeffs[1:ar_ordre].T
+        r = ac_coeffs[1:ar_order].T
         # the AR coefficients (indices 1, ..., N-1)
         b = -np.asarray(alg.pinv(r_mat, return_rank=False) @ r)
         # the AR coefficients (indices 0, ..., N-1)
@@ -146,7 +146,7 @@ class NoiseWhitening:
         n_fft: int,
         fs: float = 1,
         quantile_ratio: float = 1 / 3,
-        ar_ordre: int = 10,
+        ar_order: int = 10,
         smoothing_factor: float = 1,
     ) -> npt.NDArray[complex]:
         """Whiten the noise in input temporal signal
@@ -155,9 +155,9 @@ class NoiseWhitening:
             x (npt.NDArray[complex]): Input temporal signal
             n_fft (int): Number of frequential bins
             fs (float): Sampling rate
-            ar_ordre (int): Ordre of the estimated AR filtre
-            quantile_ratio (float): rank of the rank filtre as a ratio of the width of the filtre (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filtre used in noise PSD estimation, in window width.
+            ar_order (int): order of the estimated AR filter
+            quantile_ratio (float): rank of the rank filter as a ratio of the width of the filter (in [0, 1]).
+            smoothing_factor (float): Width ratio for the median filter used in noise PSD estimation, in window width.
 
         Returns:
             npt.NDArray[complex]: Temporal signal with noise whitened.
@@ -166,7 +166,7 @@ class NoiseWhitening:
             x,
             n_fft=n_fft,
             fs=fs,
-            ar_ordre=ar_ordre,
+            ar_order=ar_order,
             quantile_ratio=quantile_ratio,
             smoothing_factor=smoothing_factor,
         )
@@ -178,28 +178,39 @@ class NoiseWhitening:
         return x_whitened
 
 
-class FiltreBank:
-    """Some filtre bank design stuff"""
+class FilterBank:
+    """Some filter bank design stuff"""
 
     def __init__(
         self,
         nb_bands: int,
-        ordre_filtre: int,
+        decimation_factor: int,
+        order_filter: int,
         w_trans: float,
     ) -> None:
         """_summary_
 
         Args:
             nb_bands (int): _description_
-            ordre_filtre (int, optional): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
+            order_filter (int, optional): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
             w_trans (int, optional): Transition width (in normalised frequency).
         """
-        self.nb_bands = nb_bands
-        self.decimation_factor = nb_bands
+        assert nb_bands >= 2
+        # In order to avoid aliasing, decimate by less than the number of bands.
+        assert (
+            decimation_factor <= nb_bands
+        ), "Decimation factor should be less than the number of bands."
+        # self.nb_bands = nb_bands
+        self.decimation_factor = decimation_factor
+        self.nus_centre = 0.5 * np.arange(nb_bands) / (nb_bands - 1)
 
-        self.filtre_coeffs = self.make_filtres(
-            ordre_filtre=ordre_filtre, w_trans=w_trans
+        self.filter_coeffs = self.make_filters(
+            nb_bands, order_filter=order_filter, w_trans=w_trans
         )
+
+    @property
+    def nb_bands(self) -> int:
+        return np.shape(self.filter_coeffs)[0]
 
     def process(self, x: npt.NDArray[complex]) -> npt.NDArray[complex]:
         """[summary]
@@ -212,53 +223,28 @@ class FiltreBank:
         """
         assert x.ndim == 1
         n_cap = len(x)
-        x_bands = np.empty(
-            (self.nb_bands, n_cap // self.decimation_factor), dtype=complex
+        x_filtered = np.asarray(
+            [sig.lfilter(coeffs, [1], x) for coeffs in self.filter_coeffs]
         )
+        x_mods = np.exp(2j * np.pi * np.outer(self.nus_centre, np.arange(n_cap)))
+        x_shifted = x_filtered * x_mods
+        x_bands = sig.decimate(x_shifted, self.decimation_factor, axis=-1)
 
-        # nu_mod = 0.5 / self.nb_bands
-        # x_mod = np.exp(2j * np.pi * nu_mod * np.arange(n_cap))
-        # x_band = x * x_mod
-
-        for i in range(self.nb_bands):
-            x_band = sig.lfilter(self.filtre_coeffs[i], [1], x)
-            x_band = sig.decimate(x, self.nb_bands)
-            x_bands[i] = x_band
         return x_bands
 
-    def make_lp(self, ordre_filtre: int, w_trans: float) -> npt.NDArray[float]:
-        """Create a Low-Pass filter  with Remez' algotithm.
-        Parameters ----------
-            ordre_filtre (int): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
-            w_trans (int): Transition width (in normalised frequency).
-        Return
-        ------
-        `coeffs`: an numpy arrays of the channel's coefficients
-        """
-        w_band = 0.5 / self.nb_bands
-
-        # calculating band edges
-        band_lp = [
-            0,
-            w_band,
-            w_band + w_trans,
-            0.5,
-        ]  # first band for a lowpass filter
-        amp_lp = [self.nb_bands, 0]  # corresponding desired amplitudes
-
-        coeffs_lp = sig.remez(ordre_filtre, band_lp, amp_lp)
-        return coeffs_lp
-
-    def make_filtres(self, ordre_filtre: int, w_trans: float) -> npt.NDArray[float]:
+    def make_filters(
+        self, nb_bands: int, order_filter: int, w_trans: float
+    ) -> npt.NDArray[float]:
         """Create a filter bank with Remez' algorithm.
         Parameters ----------
-            ordre_filtre (int): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
+            nb_bands (int)
+            order_filter (int): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
             w_trans (float): Transition width (in normalised frequency).
         Return
         ------
         `coeffs`: an array containing the numpy arrays of the channel's coefficients
         """
-        w_band = 0.5 / self.nb_bands
+        w_band = self.nus_centre[1] - self.nus_centre[0]
         assert (
             w_band > w_trans
         ), f"Bandwidth={w_band} should be superior to width of transistory={w_trans}"
@@ -266,40 +252,40 @@ class FiltreBank:
         # calculating band edges
         band_lp = [
             0,
-            w_band,
-            w_band + w_trans,
+            w_band / 2,
+            w_band / 2 + w_trans / 2,
             0.5,
         ]  # first band for a lowpass filter
-        amp_lp = [self.nb_bands, 0]  # corresponding desired amplitudes
+        amp_lp = [1, 0]  # corresponding desired amplitudes
 
-        coeffs_lp = sig.remez(ordre_filtre, band_lp, amp_lp)
+        coeffs_lp = sig.remez(order_filter, band_lp, amp_lp)
 
         coeffs = [coeffs_lp]
 
-        for i in range(1, self.nb_bands - 1):
+        for i in range(1, nb_bands - 1):
             band_bp = [
                 0,
-                i * w_band - w_trans,
-                i * w_band,
-                (i + 1) * w_band,
-                (i + 1) * w_band + w_trans,
+                self.nus_centre[i] - w_band / 2 - w_trans / 2,
+                self.nus_centre[i] - w_band / 2,
+                self.nus_centre[i] + w_band / 2,
+                self.nus_centre[i] + w_band / 2 + w_trans / 2,
                 0.5,
             ]  # ith band for a bandpass filter
-            amp_bp = [0, self.nb_bands, 0]  # corresponding desired amplitudes
+            amp_bp = [0, 1, 0]  # corresponding desired amplitudes
 
-            coeffs_bp = sig.remez(ordre_filtre, band_bp, amp_bp)
+            coeffs_bp = sig.remez(order_filter, band_bp, amp_bp)
 
             coeffs.append(coeffs_bp)
 
         band_hp = [
             0,
-            (self.nb_bands - 1) * w_band - w_trans,
-            (self.nb_bands - 1) * w_band,
+            0.5 - w_band / 2 - w_trans / 2,
+            0.5 - w_band / 2,
             0.5,
         ]  # last band for a highpass filter
-        amp_hp = [0, self.nb_bands]  # corresponding desired amplitudes
+        amp_hp = [0, 1]  # corresponding desired amplitudes
 
-        coeffs_hp = sig.remez(ordre_filtre, band_hp, amp_hp)
+        coeffs_hp = sig.remez(order_filter, band_hp, amp_hp)
 
         coeffs.append(coeffs_hp)
 

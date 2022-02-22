@@ -12,7 +12,7 @@ import numpy.typing as npt
 
 
 from hr.esm import EsmModel, BlockEsmModel
-from hr.preprocess import NoiseWhitening, FiltreBank
+from hr.preprocess import NoiseWhitening, FilterBank
 
 
 class Esprit:
@@ -29,8 +29,9 @@ class Esprit:
         Returns:
             npt.NDArray[complex]: [description]
         """
+        assert np.ndim(x) == 1 and len(x) > n, "Insufficient number of samples."
         x_cap = alg.hankel(x[:n], r=x[n - 1 :])
-        l = x.shape[-1] - n + 1
+        l = len(x) - n + 1
         return x_cap @ x_cap.T.conj() / l
 
     @classmethod
@@ -47,8 +48,8 @@ class Esprit:
         Returns:
             Tuple[npt.NDArray[complex], npt.NDArray[float]]: (n,r) and (n,n-r) W and W_per matrices
         """
-        r_xx = cls._correlation_mat(x, n)
-        u_1, _, _ = alg.svd(r_xx)
+        c_cap_xx = cls._correlation_mat(x, n)
+        u_1, _, _ = alg.svd(c_cap_xx, compute_uv=True)
         w_cap = u_1[:, :r]
         w_cap_per = u_1[:, r:]
         return w_cap, w_cap_per
@@ -92,23 +93,27 @@ class Esprit:
     def estimate_poles(
         cls,
         phi_cap: npt.NDArray[complex],
+        clip_damp: bool = False,
+        discard_freq: bool = False,
     ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """Estimates the poles of the spectral matrix
 
         Args:
+            phi_cap (npt.NDArray[complex]): _description_
             phi_cap (npt.NDArray[complex]): Spectral matrix
+            clip_damp (bool, optional): Clips damping factors to [0, +inf[. Defaults to False.
+            discard_freq (bool, optional): Discard poles whose estimated frequency is not in [-0.5, 0.5]. Defaults to False.
 
         Returns:
             npt.NDArray[complex], npt.NDArray[complex]]: (estimated poles, right eigenvectors)
         """
         zs, g_cap = alg.eig(phi_cap, left=False, right=True)
+        zs = EsmModel.fix_poles(zs, clip_damp=clip_damp, discard_freq=discard_freq)
         return zs, g_cap
 
     @classmethod
     def estimate_esm_alphas(
-        cls,
-        x: npt.NDArray[float],
-        zs: npt.NDArray[complex],
+        cls, x: npt.NDArray[float], zs: npt.NDArray[complex]
     ) -> Tuple[
         npt.NDArray[float], npt.NDArray[float], npt.NDArray[float], npt.NDArray[float]
     ]:
@@ -132,10 +137,14 @@ class Esprit:
 
     @classmethod
     def estimate_esm(
-        cls, x: npt.NDArray[float], n: int, r: int
-    ) -> Tuple[EsmModel, npt.NDArray[complex], npt.NDArray[complex]]:
+        cls,
+        x: npt.NDArray[float],
+        n: int,
+        r: int,
+        clip_damp: bool = False,
+        discard_freq: bool = False,
+    ) -> EsmModel:
         """Estimates the complete ESM model using the ESPRIT algorithm.
-
         Args:
             x (np.ndarray): input signal
             n (int): number of lines in the Hankel matrix S
@@ -148,11 +157,38 @@ class Esprit:
         # TODO: set default for n according to the Cramer-Rao bounds!
         w_cap, _ = cls.subspace_weighting_mats(x, n, r)
         phi_cap = cls.spectral_matrix(w_cap)
-        zs, _ = cls.estimate_poles(phi_cap)
+        zs, _ = cls.estimate_poles(
+            phi_cap, clip_damp=clip_damp, discard_freq=discard_freq
+        )
         alphas = cls.estimate_esm_alphas(x, zs)
         #
-        esm = EsmModel.from_complex(zs, alphas)
-        return esm
+        x_esm = EsmModel.from_complex(zs, alphas)
+        return x_esm
+
+    @classmethod
+    def estimate_noise(
+        cls, x: npt.NDArray[float], n: int, r: int
+    ) -> npt.NDArray[complex]:
+        """Estimate noise in input signal by projecting onto the noise subspace.
+        Args:
+            x (npt.NDArray[float]): _description_
+            n (int): _description_
+            r (int): _description_
+
+        Returns:
+            npt.NDArray[complex]: _description_
+        """
+        w_cap, w_cap_per = cls.subspace_weighting_mats(x, n, r)
+        u_1 = np.concatenate((w_cap, w_cap_per), axis=1)
+        n = w_cap.shape[0]
+        c_cap_xx = cls._correlation_mat(x, n)
+        c_cap_noise = u_1 @ c_cap_xx
+        c_cap_noise[:, r:] = 0
+        c_cap_noise = u_1.T @ c_cap_noise
+        # take only the coefficients from 0 to n-1, then from n to n_cap
+        # there are multiple possibilities, not sure what's best.
+        x_noise = np.concatenate((c_cap_noise[:, 0], c_cap_noise[-1, 1:]))
+        return x_noise
 
 
 class BlockEsprit:
@@ -160,8 +196,7 @@ class BlockEsprit:
 
     @classmethod
     def estimate_esm(
-        cls,
-        x: npt.NDArray[float], n: int, r: int, l_win: int, step: int
+        cls, x: npt.NDArray[float], n: int, r: int, l_win: int, step: int
     ) -> BlockEsmModel:
         """Computes `esprit` and `least_square` by blocks.
 
@@ -688,19 +723,19 @@ class Ester:
         Still don't know if p_max whether chosen or estimated,
         and how.
         Don't discard the bogus p=0 case,
-        because then the best ordre is the argmax!
+        because then the best order is the argmax!
 
         Args:
             x (npt.NDArray[complex]): [description]
             n (int): [description]
-            p_max (int): Maximum ordre to consider, in [|1, n-2|]
+            p_max (int): Maximum order to consider, in [|1, n-2|]
 
         Returns:
             List[npt.NDArray[complex]]: Estimation error of p for p in [1, p_max]
         """
         assert (
             1 <= p_max < n - 1
-        ), f"Maximum ordre p_max={p_max} should be less than n-1={n-1}."
+        ), f"Maximum order p_max={p_max} should be less than n-1={n-1}."
 
         w, _ = Esprit.subspace_weighting_mats(x, n, p_max)
         w_cap = [w[:, :p] for p in range(p_max + 1)]
@@ -764,10 +799,10 @@ class Ester:
         return j_cap
 
     @classmethod
-    def estimate_esm_ordre(
+    def estimate_esm_order(
         cls, x: npt.NDArray[complex], n: int, p_max: int, thresh_ratio: float = 0.1
     ) -> int:
-        """Gets the estimated ESM model ordre r using the ESTER algorithm.
+        """Gets the estimated ESM model order r using the ESTER algorithm.
         see: http://ieeexplore.ieee.org/document/1576975/
 
         'In presence of noise, [...] a robust way of selecting

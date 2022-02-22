@@ -12,7 +12,7 @@ from typing import Tuple, Dict, Union, Any, Callable
 
 from util.util import compute_frf, to_db
 from expr.util import find_win_start, make_linramp
-from hr.process import EsmSubspaceDecomposer
+from hr.decomp import EsmSubspaceDecomposer
 
 
 def load_analysis(
@@ -51,8 +51,8 @@ def perform_analysis(
     sr = np.round(1 / (times[1] - times[0])).astype(int)
     n_fft = np.power(2, np.ceil(np.log2(len(times)))).astype(int)
     #
-    excitation_kind = "hammer"
-    # excitation_kind = "wire"
+    # excitation_kind = "hammer"
+    excitation_kind = "wire"
     # excitation_kind = data_raw["excitation_kind"]
     #
     # Signals and windowed signals
@@ -149,16 +149,17 @@ def perform_analysis(
         n_esprit=conf.hr.esprit.n,
         p_max_ester=conf.hr.ester.p_max,
         thresh_ratio_ester=conf.hr.ester.thresh_ratio,
-        n_fft_noise=conf.hr.whitening.n_fft,  # TODO: set according to data -> excit, acc, etc.
+        # TODO: set according to data -> excit, acc, etc.
+        n_fft_noise=conf.hr.whitening.n_fft,
         smoothing_factor_noise=conf.hr.whitening.smoothing_factor,
         quantile_ratio_noise=conf.hr.whitening.quantile_ratio,
+        clip_damp=conf.hr.esprit.clip_damp,
+        clip_freq=conf.hr.esprit.clip_freq,
     )
-    esm_excit_win, white_excit_win = decomp.perform(
-        data_excit_win
-    )
-    esm_acc_win, white_acc_win = decomp.perform(data_acc_win)
-    esm_mic_win, white_mic_win = decomp.perform(data_mic_win)
-    esm_imp_win, white_imp_win = decomp.perform(imp_win)
+    esm_excit_win, noise_excit_win, white_excit_win = decomp.perform(data_excit_win)
+    esm_acc_win, noise_acc_win, white_acc_win = decomp.perform(data_acc_win)
+    esm_mic_win, noise_mic_win, white_mic_win = decomp.perform(data_mic_win)
+    esm_imp_win, noise_imp_win, white_imp_win = decomp.perform(imp_win)
     # Also compute the spectra of the signals with whitened noise.
     ft_excit_white = np.fft.fft(white_excit_win, n=n_fft)
     ft_acc_white = np.fft.fft(white_acc_win, n=n_fft)
@@ -205,26 +206,18 @@ def perform_analysis(
         "excit": {
             "win": {
                 "esm": esm_excit_win,
-                "white": white_excit_win
+                "noise": noise_excit_win,
+                "white": white_excit_win,
             }
         },
         "acc": {
-            "win": {
-                "esm": esm_acc_win,
-                "white": white_acc_win
-            }
+            "win": {"esm": esm_acc_win, "noise": noise_acc_win, "white": white_acc_win}
         },
         "mic": {
-            "win": {
-                "esm": esm_mic_win,
-                "white": white_mic_win
-            }
+            "win": {"esm": esm_mic_win, "noise": noise_mic_win, "white": white_mic_win}
         },
         "imp": {
-            "win": {
-                "esm": esm_imp_win,
-                "white": white_imp_win
-            }
+            "win": {"esm": esm_imp_win, "noise": noise_imp_win, "white": white_imp_win}
         },
     }
     return data
@@ -342,8 +335,8 @@ def compute_analysis_figures(
     # Accelerometer
     ax = fig_time.add_subplot(2, 2, 2)
     ax.set_title("Accelerometer")
-    ax.plot(times, sig_acc)
-    ax.plot(times_acc_win, sig_acc_win, c="r")
+    ax.plot(times, sig_acc, label="Whole acquisition")
+    ax.plot(times_acc_win, sig_acc_win, c="r", label="Windowed")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Acceleration (m.s$^{-2}$)")
     ax.set_xlim(time_focus_acc)
@@ -363,6 +356,7 @@ def compute_analysis_figures(
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude (dB)")
     ax.set_xlim(time_focus)
+    ax.legend()
     # FREQUENTIAL RESPONSES
     fig_freq = fig_fac(figsize=(16, 12))
     fig_freq.subplots_adjust(hspace=0.3, wspace=0.4)
@@ -375,32 +369,51 @@ def compute_analysis_figures(
         np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_excit_win)), c="r"
     )
     ax.semilogy(
-        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_excit_white)), c="y"
+        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_excit_white)), c="orange"
     )
     # Show estimated frequencies in ESM model
     amp_plot_gain = 3
+    gamma_plot_gain = 6
     for j in range(esm_excit_win.r):
-        ax.axvline(
+        m_line, _, _ = ax.stem(
             esm_excit_win.nus[j] * sr,
-            0,
             amp_plot_gain * esm_excit_win.amps[j],
-            c="orange",
+            markerfmt="C2o",
+            label="Estimated frequencies",
         )
+        plt.setp(m_line, markersize=gamma_plot_gain * esm_excit_win.gammas[j])
     ax.set_xlabel("Frequency (Hz)")
     ax.set_ylabel("Force (dB[N])")
     ax.set_xlim(freq_focus)
     # Accelerometer
     ax = fig_freq.add_subplot(3, 1, 2)
     ax.set_title("Accelerometer")
-    ax.semilogy(np.fft.fftshift(freqs), np.fft.fftshift(np.abs(ft_acc)))
-    ax.semilogy(np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_acc_win)), c="r")
     ax.semilogy(
-        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_acc_white)), c="y"
+        np.fft.fftshift(freqs),
+        np.fft.fftshift(np.abs(ft_acc)),
+        label="Whole acquisition",
+    )
+    ax.semilogy(
+        np.fft.fftshift(freqs_win),
+        np.fft.fftshift(np.abs(ft_acc_win)),
+        c="r",
+        label="Windowed",
+    )
+    ax.semilogy(
+        np.fft.fftshift(freqs_win),
+        np.fft.fftshift(np.abs(ft_acc_white)),
+        c="orange",
+        label="Windowed and whitened",
     )
     for j in range(esm_acc_win.r):
-        ax.axvline(
-            esm_acc_win.nus[j] * sr, 0, amp_plot_gain * esm_acc_win.amps[j], c="orange"
+        # ax.axvline( esm_acc_win.nus[j] * sr, 0, amp_plot_gain * esm_acc_win.amps[j], c="orange")
+        m_line, _, _ = ax.stem(
+            esm_acc_win.nus[j] * sr,
+            amp_plot_gain * esm_acc_win.amps[j],
+            markerfmt="C2o",
+            label="Estimated frequencies",
         )
+        plt.setp(m_line, markersize=gamma_plot_gain * esm_acc_win.gammas[j])
     ax.set_xlabel("Frequency (Hz)")
     ax.set_ylabel("Acceleration (dB[m.s$^{-2}$]r")
     ax.set_xlim(freq_focus)
@@ -411,15 +424,21 @@ def compute_analysis_figures(
     ax.semilogy(np.fft.fftshift(freqs), np.fft.fftshift(np.abs(ft_mic)))
     ax.semilogy(np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_mic_win)), c="r")
     ax.semilogy(
-        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_mic_white)), c="y"
+        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_mic_white)), c="orange"
     )
     for j in range(esm_mic_win.r):
-        ax.axvline(
-            esm_mic_win.nus[j] * sr, 0, amp_plot_gain * esm_mic_win.amps[j], c="orange"
+        # ax.axvline( esm_mic_win.nus[j] * sr, 0, amp_plot_gain * esm_mic_win.amps[j], c="orange")
+        m_line, _, _ = ax.stem(
+            esm_mic_win.nus[j] * sr,
+            amp_plot_gain * esm_mic_win.amps[j],
+            markerfmt="C2o",
+            label="Estimated frequencies",
         )
+        plt.setp(m_line, markersize=gamma_plot_gain * esm_mic_win.gammas[j])
     ax.set_xlabel("Frequency (Hz)")
     ax.set_ylabel("Amplitude (dB)")
     ax.set_xlim(freq_focus)
+    ax.legend()
     #
     # Frequency response functions
     fig_frf = fig_fac(figsize=(16, 12))
@@ -428,9 +447,21 @@ def compute_analysis_figures(
     # Module
     ax = fig_frf.add_subplot(2, 1, 1)
     ax.set_title("Module")
-    ax.semilogy(np.fft.fftshift(freqs), np.fft.fftshift(np.abs(frf)))
-    ax.semilogy(np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(frf_win)), c="r")
-    ax.semilogy(np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(frf_white)), c="y")
+    ax.semilogy(
+        np.fft.fftshift(freqs), np.fft.fftshift(np.abs(frf)), label="Whole acquisition"
+    )
+    ax.semilogy(
+        np.fft.fftshift(freqs_win),
+        np.fft.fftshift(np.abs(frf_win)),
+        c="r",
+        label="Windowed",
+    )
+    ax.semilogy(
+        np.fft.fftshift(freqs_win),
+        np.fft.fftshift(np.abs(frf_white)),
+        c="y",
+        label="Windowed and whitened",
+    )
     for j in range(esm_imp_win.r):
         ax.axvline(
             esm_imp_win.nus[j] * sr, 0, amp_plot_gain * esm_imp_win.amps[j], c="orange"
@@ -448,6 +479,7 @@ def compute_analysis_figures(
     # ax.set_ylabel("Phase (rad)")
     # ax.set_xlim(freq_focus)
     #
+    ax.legend()
     # Spectrogrammes
     spec_extent = [times_spec[0], times_spec[-1], freqs_spec[0], freqs_spec[-1]]
     # Module
@@ -524,10 +556,10 @@ def save_analysis(
     data_esm_acc_win = np.real(esm_acc_win.synth(len(times_acc_win)))
     data_esm_mic_win = np.real(esm_mic_win.synth(len(times_mic_win)))
     data_esm_imp_win = np.real(esm_imp_win.synth(len(times_imp)))
-    data_noise_excit_win = data_excit_win - data_esm_excit_win
-    data_noise_acc_win = data_acc_win - data_esm_acc_win
-    data_noise_mic_win = data_mic_win - data_esm_mic_win
-    data_noise_imp_win = imp_win - data_esm_imp_win
+    data_noise_excit_win = data["hr"]["excit"]["win"]["noise"]
+    data_noise_acc_win = data["hr"]["acc"]["win"]["noise"]
+    data_noise_mic_win = data["hr"]["mic"]["win"]["noise"]
+    data_noise_imp_win = data["hr"]["imp"]["win"]["noise"]
     #
     output_path = pathlib.Path(output_path)
     output_figure_path = output_path / "figures"

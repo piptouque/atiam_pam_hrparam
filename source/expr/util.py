@@ -13,7 +13,7 @@ def find_win_start(x: npt.NDArray[float], attack_length: int) -> int:
         Tuple[int, int]: [description]
     """
     max_idx = np.argmax(x)
-    idx_start = int(np.floor(max_idx - attack_length))
+    idx_start = max(0, int(np.floor(max_idx - attack_length)))
     return idx_start
 
 

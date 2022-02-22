@@ -23,7 +23,7 @@
             "name": "exponential",
             "kwargs": {
                 "center": 0,
-                "tau": 10e3
+                "tau": 10e6
             }
         }
     },
@@ -37,7 +37,9 @@
     },
     "hr": {
         "esprit": {
-            "n": 64
+            "n": 348,
+            "clip_damp": true,
+            "clip_freq": true
         },
         "whitening": {
             "n_fft": 1024,
@@ -46,7 +48,7 @@
             "quantile_ratio": 0.3
         },
         "ester": {
-            "p_max": 32,
+            "p_max": 128,
             "thresh_ratio": 0.1
         }
     }
