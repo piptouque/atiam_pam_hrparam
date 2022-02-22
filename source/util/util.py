@@ -1,10 +1,24 @@
-import os
+from types import SimpleNamespace
+import json
+
 import pandas as pd
 import numpy as np
 import numpy.typing as npt
 
-import json
-from types import SimpleNamespace
+
+def next_power_2(i: int) -> int:
+    """Next power of two
+
+    Args:
+        i (int): _description_
+
+    Returns:
+        int: _description_
+    """
+    power = 1
+    while power < i:
+        power *= 2
+    return power
 
 
 def compute_frf(

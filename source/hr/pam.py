@@ -77,14 +77,14 @@ def synthesize(
             -(1 / 20)
             * (
                 sin_to_noise
-                + 10 * np.log10(np.sum(noise ** 2))
+                + 10 * np.log10(np.sum(noise**2))
                 - 10 * np.log10(np.sum(np.real(sinusoids) ** 2))
             )
         )
         noise = norm * noise
         sig = sinusoids + noise
         snr = 10 * np.log10(np.sum(np.real(sig) ** 2)) - 10 * np.log10(
-            np.sum(noise ** 2)
+            np.sum(noise**2)
         )
 
     return sig, sinusoids, noise, snr
@@ -121,16 +121,7 @@ def preemphasize(sig: np.ndarray, b=np.array([1, -0.95])):
 def filter_bank(
     num_bands: int, fs: int, filter_length: int = 425, trans_width: int = 425
 ):
-    """
-    Create a filter bank with Remez' algotithm.
-
-    Parameters
-    ----------
-    `sig`: input signal
-    `num_bands`: number of sub-bands
-    `fs`: sampling rate
-    `filter_length`: number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well)
-    `trans_width`: transition width (in Hz)
+    """Create a filter bank with Remez' algotithm.  Parameters ---------- `sig`: input signal `num_bands`: number of sub-bands `fs`: sampling rate `filter_length`: number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well) `trans_width`: transition width (in Hz)
 
     Return
     ------
@@ -203,7 +194,7 @@ def decimate(sig: np.ndarray, factor: int):
     return decimated
 
 
-def whiten(sig: np.ndarray, smoothing_order: int, ar_order: int):
+def whiten(sig: np.ndarray, smoothing_order: int, rank: int, ar_order: int):
     """
     Whiten a signal with colored noise.
 
@@ -211,6 +202,7 @@ def whiten(sig: np.ndarray, smoothing_order: int, ar_order: int):
     ----------
     `sig`: the input signal
     `smoothing_order`: (discrete) at least two times the length of the PSD's principal lobe
+    `rank` : rank factor; for example 2 for median, 3 for (1/3)-(2/3), etc...
     `ar_order`: autoregressive model order (10 to 20)
 
     Return
@@ -222,8 +214,6 @@ def whiten(sig: np.ndarray, smoothing_order: int, ar_order: int):
     `psd_sig_white`: PSD of the filtered signal
     `psd_noise_white`: Estimatiobn of the white noise PSD
     """
-
-    rank = 4  # rank factor (for example 2 for median, 3 for (1/3)-(2/3)
     N = len(sig)
     Nfft = nextpow2(N)
 
