@@ -178,16 +178,15 @@ class Esprit:
         Returns:
             npt.NDArray[complex]: _description_
         """
-        w_cap, w_cap_per = cls.subspace_weighting_mats(x, n, r)
-        u_1 = np.concatenate((w_cap, w_cap_per), axis=1)
+        w_cap, _ = cls.subspace_weighting_mats(x, n, r)
         n = w_cap.shape[0]
-        c_cap_xx = cls._correlation_mat(x, n)
-        c_cap_noise = u_1 @ c_cap_xx
-        c_cap_noise[:, r:] = 0
-        c_cap_noise = u_1.T @ c_cap_noise
+        # projection matrix onto the harmonic signal
+        p_cap_harm = w_cap @ w_cap.T.conj()
+        x_cap = alg.hankel(x[:n], r=x[n - 1 :])
+        x_cap_noise = (np.identity(n) - p_cap_harm) @ x_cap
         # take only the coefficients from 0 to n-1, then from n to n_cap
         # there are multiple possibilities, not sure what's best.
-        x_noise = np.concatenate((c_cap_noise[:, 0], c_cap_noise[-1, 1:]))
+        x_noise = np.concatenate((x_cap_noise[:, 0], x_cap_noise[-1, 1:]))
         return x_noise
 
 

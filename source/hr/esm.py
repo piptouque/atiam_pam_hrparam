@@ -28,7 +28,10 @@ class EsmModel:
         gammas = np.asarray(gammas)
         nus = np.asarray(nus)
         amps = np.asarray(amps)
+        # Wrapping phases
+        # see: https://stackoverflow.com/a/15927914
         phis = np.asarray(phis)
+        phis = (phis + np.pi) % (2 * np.pi) - np.pi
         r = gammas.shape[0]
         # Some safety checks
         s = gammas.shape
@@ -50,6 +53,24 @@ class EsmModel:
         self.amps = amps
         self.phis = phis
         self.r = r
+
+    @property
+    def alphas(self) -> npt.NDArray[complex]:
+        """_summary_
+
+        Returns:
+            npt.NDArray[complex]: _description_
+        """
+        return self.ampphase_to_alphas(self.amps, self.phis)
+
+    @property
+    def zs(self) -> npt.NDArray[complex]:
+        """_summary_
+
+        Returns:
+            npt.NDArray[complex]: _description_
+        """
+        return self.dampfreq_to_poles(self.gammas, self.nus)
 
     @classmethod
     def from_complex(
@@ -111,6 +132,21 @@ class EsmModel:
         return gammas, nus
 
     @classmethod
+    def dampfreq_to_poles(
+        cls, gammas: npt.NDArray[float], nus: npt.NDArray[float]
+    ) -> npt.NDArray[complex]:
+        """_summary_
+
+        Args:
+            gammas (npt.NDArray[float]): _description_
+            nus (npt.NDArray[float]): _description_
+
+        Returns:
+            npt.NDArray[complex]: _description_
+        """
+        return np.exp(-gammas + 2j * np.pi * nus)
+
+    @classmethod
     def fix_poles(
         cls, zs: npt.NDArray[complex], clip_damp: bool = True, discard_freq: bool = True
     ) -> npt.NDArray[complex]:
@@ -125,12 +161,11 @@ class EsmModel:
         Returns:
             npt.NDArray[complex]: 'Fixed' complex poles
         """
-        gammas = -np.log(np.abs(zs))
-        nus = np.angle(zs) / (2 * np.pi)  # frequencies
+        gammas, nus = cls.poles_to_dampfreq(zs)
         gammas, nus = cls._fix_dampfreq(
             gammas, nus, clip_damp=clip_damp, discard_freq=discard_freq
         )
-        zs = np.exp(-gammas + 2j * np.pi * nus)
+        zs = cls.dampfreq_to_poles(gammas, nus)
         return zs
 
     @staticmethod
@@ -186,6 +221,21 @@ class EsmModel:
         phis = np.angle(alphas)
         return amps, phis
 
+    @classmethod
+    def ampphase_to_alphas(
+        cls, amps: npt.NDArray[float], phis: npt.NDArray[float]
+    ) -> npt.NDArray[complex]:
+        """_summary_
+
+        Args:
+            amps (npt.NDArray[float]): _description_
+            phis (npt.NDArray[float]): _description_
+
+        Returns:
+            npt.NDArray[complex]: _description_
+        """
+        return amps * np.exp(1j * phis)
+
     def synth(
         self,
         n_s: int,
@@ -207,10 +257,11 @@ class EsmModel:
         log_zs = -self.gammas + 1j * 2 * np.pi * self.nus  # log of poles
         alphas = self.amps * np.exp(1j * self.phis)  # complex amplitudes
 
+        # noisless signal
         x_synth = np.sum(
             np.outer(alphas, np.ones_like(ts)) * np.exp(np.outer(log_zs, ts)), axis=0
-        )  # noisless signal (ESM)
-
+        )
+        # x_synth = np.real(x_synth)
         return x_synth
 
     @staticmethod

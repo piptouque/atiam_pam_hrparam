@@ -1,5 +1,6 @@
 from typing import Tuple
 
+import numpy as np
 import numpy.typing as npt
 
 from hr.esm import EsmModel
@@ -20,6 +21,7 @@ class EsmSubspaceDecomposer:
         quantile_ratio_noise: float = 1 / 3,
         ar_order_noise: int = 10,
         thresh_ratio_ester: float = 0.1,
+        correct_alphas: bool = True,
         discard_freq: bool = False,
         clip_damp: bool = False,
     ) -> None:
@@ -38,6 +40,8 @@ class EsmSubspaceDecomposer:
         #
         self.clip_damp = clip_damp
         self.discard_freq = discard_freq
+        #
+        self.correct_alphas = correct_alphas
 
     def perform(
         self, x: npt.NDArray[complex]
@@ -54,7 +58,7 @@ class EsmSubspaceDecomposer:
         """
 
         # 1. Whiten the noise
-        x_white = NoiseWhitening.whiten(
+        x_white, noise_psd = NoiseWhitening.whiten(
             x,
             self.n_fft_noise,
             fs=self.fs,
@@ -72,8 +76,14 @@ class EsmSubspaceDecomposer:
             thresh_ratio=self.thresh_ratio_ester,
         )
 
+        # If the signal is of a real data type,
+        # The spectrum is symmetric so search for twice as many sines!
+        if np.isrealobj(x):
+            r *= 2
+
         # 3. Apply ESPRIT on the whitened signal
         # and estimate the ESM model parameters
+        # The order to search for is twice the estimated,
         x_esm = Esprit.estimate_esm(
             x_white,
             self.n_esprit,
@@ -82,5 +92,15 @@ class EsmSubspaceDecomposer:
             discard_freq=self.discard_freq,
         )
 
+        if self.correct_alphas:
+            # 4. Correct the real amplitudes and phases
+            # from the estimated noise psd
+            alphas_corr = NoiseWhitening.correct_alphas(
+                x_esm.alphas, x_esm.zs, noise_psd
+            )
+            x_esm = EsmModel.from_complex(x_esm.zs, alphas_corr)
+
+        # TODO
         x_noise = Esprit.estimate_noise(x, self.n_esprit, r)
+
         return x_esm, x_noise, x_white

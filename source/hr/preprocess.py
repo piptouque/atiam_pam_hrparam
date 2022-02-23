@@ -1,15 +1,19 @@
-from typing import Union
+from typing import Tuple
 
 import scipy.linalg as alg
 import scipy.signal as sig
 import scipy.ndimage as img
+import scipy.interpolate as pol
 import numpy as np
 import numpy.typing as npt
 
+from hr.esm import EsmModel
 from util.util import next_power_2
 
 
 class PreEmphasis:
+    """Roughly equalise the lower and higher frequencies"""
+
     @staticmethod
     def emphasise(sig: npt.NDArray[float], b=np.array([1, -0.95])):
         """
@@ -47,8 +51,9 @@ class NoiseWhitening:
         n_fft = x_psd.shape[-1]
         size = int(np.round(nu_width * n_fft))
         # choose rank in function of the chosen quantile
-        rank = int(np.round(quantile_ratio * size))
-        noise_psd = img.rank_filter(x_psd, rank=rank, size=size)
+        noise_psd = img.percentile_filter(
+            x_psd, percentile=quantile_ratio * 100, size=size
+        )
         return noise_psd
 
     @classmethod
@@ -83,7 +88,6 @@ class NoiseWhitening:
         win_width = win_width_norm / m
         # At least twice the bandwidth of the window used in the PSD computation!
         nu_width = smoothing_factor * 2 * win_width
-        # print(f"width={nu_width * fs} Hz, {nu_width * n_fft} samples")
         _, x_psd = sig.welch(
             x, fs=fs, nfft=n_fft, window=win_name, nperseg=m, return_onesided=False
         )
@@ -96,35 +100,16 @@ class NoiseWhitening:
 
     @classmethod
     def estimate_noise_ar_coeffs(
-        cls,
-        x: npt.NDArray[complex],
-        n_fft: int,
-        fs: float = 1,
-        ar_order: int = 10,
-        quantile_ratio: float = 1 / 3,
-        smoothing_factor: float = 1,
+        cls, noise_psd: npt.NDArray[complex], ar_order: int = 10
     ) -> npt.NDArray[complex]:
         """Estimate the coefficients of the filter generating the coloured noise from a white one.
 
         Args:
-            x (npt.NDArray[complex]): Input temporal signal, for each frequency band
-            n_fft (int): Number of frequential bins
-            fs (float): Sampling rate
-            ar_order (int): order of the estimated AR filter. ~ 10?
-            quantile_ratio (float): rank of the rank filter as a ratio of the width of the filter (in [0, 1]).
-            smoothing_factor (float): Width ratio for the median filter used in noise PSD estimation, in window width.
-                At least 1 (=twice the length of the PSD's principal lobe (can be done visually))
 
         Returns:
             npt.NDArray[complex]: Coefficients of the AR filter.
         """
-        noise_psd = cls.estimate_noise_psd(
-            x,
-            n_fft=n_fft,
-            fs=fs,
-            quantile_ratio=quantile_ratio,
-            smoothing_factor=smoothing_factor,
-        )
+        n_fft = np.shape(noise_psd)[0]
         # Step 3: calculating the autocovariance of the noise
         # autocovariance (vector) of the noise
         ac_coeffs = np.real(np.fft.ifft(noise_psd, n=n_fft))
@@ -148,7 +133,7 @@ class NoiseWhitening:
         quantile_ratio: float = 1 / 3,
         ar_order: int = 10,
         smoothing_factor: float = 1,
-    ) -> npt.NDArray[complex]:
+    ) -> Tuple[npt.NDArray[complex], npt.NDArray[complex]]:
         """Whiten the noise in input temporal signal
 
         Args:
@@ -160,22 +145,63 @@ class NoiseWhitening:
             smoothing_factor (float): Width ratio for the median filter used in noise PSD estimation, in window width.
 
         Returns:
-            npt.NDArray[complex]: Temporal signal with noise whitened.
+            Tuple[npt.NDArray[complex], npt.NDArray[complex]]: (Temporal signal with noise whitened, noise PSD)
         """
-        b = cls.estimate_noise_ar_coeffs(
+        noise_psd = cls.estimate_noise_psd(
             x,
             n_fft=n_fft,
             fs=fs,
-            ar_order=ar_order,
             quantile_ratio=quantile_ratio,
             smoothing_factor=smoothing_factor,
+        )
+        b = cls.estimate_noise_ar_coeffs(
+            noise_psd,
+            ar_order=ar_order,
         )
         # Step 4: applying the corresponding FIR to the signal's PSD to obtain the whitened signal
         # The FIR is the inverse of the AR filter so the coefficients of the FIR's numerator
         # are the coefficients of the AR's denominator, i.e. the array b
         # denominator coeff of the FIR's transfer function is 1
         x_whitened = sig.lfilter(b, [1], x)
-        return x_whitened
+        return x_whitened, noise_psd
+
+    @staticmethod
+    def correct_alphas(
+        alphas: npt.NDArray[complex],
+        zs: npt.NDArray[complex],
+        noise_psd: npt.NDArray[complex],
+    ) -> npt.NDArray[complex]:
+        """Correct the real amplitudes and phases from the estimated noise psd
+
+        Args:
+            alphas (npt.NDArray[complex]): _description_
+            noise_psd (npt.NDArray[complex]): _description_
+
+        Returns:
+            npt.NDArray[complex]: _description_
+        """
+        # TODO: do phases need correcting? If so, how?
+        n_fft = np.shape(noise_psd)[0]
+        amps_est, phis_est = EsmModel.alphas_to_ampphase(alphas)
+        _, nus_est = EsmModel.poles_to_dampfreq(zs)
+        nus_sorted = np.fft.fftshift(np.fft.fftfreq(n_fft))
+        noise_psd_sorted = np.fft.fftshift(noise_psd)
+        func_amp_noise_psd = pol.interp1d(
+            nus_sorted, np.abs(noise_psd_sorted), assume_sorted=True
+        )
+        # alias estimated if larger than last freq bin,
+        # to prevent interpolation exception
+        def _unwrap_last_nu(nu_est: float) -> float:
+            return (
+                nu_est if nu_est <= nus_sorted[-1] else -0.5 + (nu_est - nus_sorted[-1])
+            )
+
+        nus_est = np.vectorize(_unwrap_last_nu)(nus_est)
+
+        amps_noise = np.asarray([func_amp_noise_psd(nu_est) for nu_est in nus_est])
+        amps_corr = amps_est - amps_noise
+        alphas_corr = EsmModel.ampphase_to_alphas(amps_corr, phis_est)
+        return alphas_corr
 
 
 class FilterBank:
@@ -196,12 +222,13 @@ class FilterBank:
             w_trans (int, optional): Transition width (in normalised frequency).
         """
         assert nb_bands >= 2
+        nb_bands = int(nb_bands)
         # In order to avoid aliasing, decimate by less than the number of bands.
         assert (
             decimation_factor <= nb_bands
         ), "Decimation factor should be less than the number of bands."
         # self.nb_bands = nb_bands
-        self.decimation_factor = decimation_factor
+        self.decimation_factor = int(decimation_factor)
         self.nus_centre = 0.5 * np.arange(nb_bands) / (nb_bands - 1)
 
         self.filter_coeffs = self.make_filters(
