@@ -41,11 +41,17 @@
             "clip_damp": true,
             "discard_freq": true
         },
+        "filter_bank": {
+            "nb_bands": 10,
+            "order_filter": 126,
+            "w_trans": 0.03
+        },
         "whitening": {
             "n_fft": 1024,
             "ar_ordre": 10,
             "smoothing_factor": 3.1,
-            "quantile_ratio": 0.3
+            "quantile_ratio": 0.3,
+            "correct_alphas": false
         },
         "ester": {
             "p_max": 128,

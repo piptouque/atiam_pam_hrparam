@@ -52,7 +52,6 @@ class EsmModel:
         self.nus = nus
         self.amps = amps
         self.phis = phis
-        self.r = r
 
     @property
     def alphas(self) -> npt.NDArray[complex]:
@@ -71,6 +70,10 @@ class EsmModel:
             npt.NDArray[complex]: _description_
         """
         return self.dampfreq_to_poles(self.gammas, self.nus)
+
+    @property
+    def r(self) -> int:
+        return np.shape(self.gammas)[0]
 
     @classmethod
     def from_complex(
@@ -196,12 +199,8 @@ class EsmModel:
             # be in the [-0.5, 0.5] range.
             # Discard both frequency and damping if that's not the case
             ids_good = np.logical_and(-0.5 <= nus, nus <= 0.5)
-            if not np.all(ids_good):
-                print(nus)
             gammas = gammas[ids_good]
             nus = nus[ids_good]
-            if not np.all(ids_good):
-                print(nus)
         return gammas, nus
 
     @classmethod

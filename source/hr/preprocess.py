@@ -221,14 +221,15 @@ class FilterBank:
             order_filter (int, optional): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
             w_trans (int, optional): Transition width (in normalised frequency).
         """
-        assert nb_bands >= 2
         nb_bands = int(nb_bands)
+        decimation_factor = int(decimation_factor)
+        assert nb_bands >= 2
         # In order to avoid aliasing, decimate by less than the number of bands.
         assert (
-            decimation_factor <= nb_bands
+            0 < decimation_factor <= nb_bands
         ), "Decimation factor should be less than the number of bands."
         # self.nb_bands = nb_bands
-        self.decimation_factor = int(decimation_factor)
+        self.decimation_factor = decimation_factor
         self.nus_centre = 0.5 * np.arange(nb_bands) / (nb_bands - 1)
 
         self.filter_coeffs = self.make_filters(
@@ -238,6 +239,10 @@ class FilterBank:
     @property
     def nb_bands(self) -> int:
         return np.shape(self.filter_coeffs)[0]
+
+    @property
+    def w_band(self) -> float:
+        return self.nus_centre[1] - self.nus_centre[0]
 
     def process(self, x: npt.NDArray[complex]) -> npt.NDArray[complex]:
         """[summary]
@@ -256,7 +261,6 @@ class FilterBank:
         x_mods = np.exp(2j * np.pi * np.outer(self.nus_centre, np.arange(n_cap)))
         x_shifted = x_filtered * x_mods
         x_bands = sig.decimate(x_shifted, self.decimation_factor, axis=-1)
-
         return x_bands
 
     def make_filters(
@@ -264,55 +268,58 @@ class FilterBank:
     ) -> npt.NDArray[float]:
         """Create a filter bank with Remez' algorithm.
         Parameters ----------
-            nb_bands (int)
+            nb_bands (int): should ne odd!
             order_filter (int): Number of taps in each filter = order of filter + 1 (choose it odd for the hp filter to function well).
             w_trans (float): Transition width (in normalised frequency).
         Return
         ------
         `coeffs`: an array containing the numpy arrays of the channel's coefficients
         """
-        w_band = self.nus_centre[1] - self.nus_centre[0]
         assert (
-            w_band > w_trans
-        ), f"Bandwidth={w_band} should be superior to width of transistory={w_trans}"
+            self.w_band > w_trans
+        ), f"Transient width={w_trans} should be lower than bandwidth={self.w_band}."
+        # see: https://stackoverflow.com/a/27759245
+        assert (
+            order_filter % 2 == 0
+        ), "Order of filtre bands should be even! (odd number of taps)"
 
         # calculating band edges
         band_lp = [
             0,
-            w_band / 2,
-            w_band / 2 + w_trans / 2,
+            self.w_band / 2,
+            self.w_band / 2 + w_trans / 2,
             0.5,
         ]  # first band for a lowpass filter
         amp_lp = [1, 0]  # corresponding desired amplitudes
 
-        coeffs_lp = sig.remez(order_filter, band_lp, amp_lp)
+        coeffs_lp = sig.remez(order_filter + 1, band_lp, amp_lp)
 
         coeffs = [coeffs_lp]
 
         for i in range(1, nb_bands - 1):
             band_bp = [
                 0,
-                self.nus_centre[i] - w_band / 2 - w_trans / 2,
-                self.nus_centre[i] - w_band / 2,
-                self.nus_centre[i] + w_band / 2,
-                self.nus_centre[i] + w_band / 2 + w_trans / 2,
+                self.nus_centre[i] - self.w_band / 2 - w_trans / 2,
+                self.nus_centre[i] - self.w_band / 2,
+                self.nus_centre[i] + self.w_band / 2,
+                self.nus_centre[i] + self.w_band / 2 + w_trans / 2,
                 0.5,
             ]  # ith band for a bandpass filter
             amp_bp = [0, 1, 0]  # corresponding desired amplitudes
 
-            coeffs_bp = sig.remez(order_filter, band_bp, amp_bp)
+            coeffs_bp = sig.remez(order_filter + 1, band_bp, amp_bp)
 
             coeffs.append(coeffs_bp)
 
         band_hp = [
             0,
-            0.5 - w_band / 2 - w_trans / 2,
-            0.5 - w_band / 2,
+            0.5 - self.w_band / 2 - w_trans / 2,
+            0.5 - self.w_band / 2,
             0.5,
         ]  # last band for a highpass filter
         amp_hp = [0, 1]  # corresponding desired amplitudes
 
-        coeffs_hp = sig.remez(order_filter, band_hp, amp_hp)
+        coeffs_hp = sig.remez(order_filter + 1, band_hp, amp_hp)
 
         coeffs.append(coeffs_hp)
 

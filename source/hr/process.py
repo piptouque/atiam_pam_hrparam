@@ -29,7 +29,7 @@ class Esprit:
         Returns:
             npt.NDArray[complex]: [description]
         """
-        assert np.ndim(x) == 1 and len(x) > n, "Insufficient number of samples."
+        assert np.ndim(x) == 1 and len(x) > n, f"Insufficient number of samples {len(x)} < {n}."
         x_cap = alg.hankel(x[:n], r=x[n - 1 :])
         l = len(x) - n + 1
         return x_cap @ x_cap.T.conj() / l
@@ -830,6 +830,10 @@ class Ester:
         ]
         # first index corresponds to p=1, second to p=2 etc.
         r = np.amax(j_max_thres_ids) + 1
+        # If the signal is of a real data type,
+        # The spectrum is symmetric so search for twice as many sines!
+        if np.isrealobj(x):
+            r *= 2
         return r
 
 

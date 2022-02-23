@@ -148,13 +148,17 @@ def perform_analysis(
         fs=sr,
         n_esprit=conf.hr.esprit.n,
         p_max_ester=conf.hr.ester.p_max,
-        thresh_ratio_ester=conf.hr.ester.thresh_ratio,
-        # TODO: set according to data -> excit, acc, etc.
         n_fft_noise=conf.hr.whitening.n_fft,
+        thresh_ratio_ester=conf.hr.ester.thresh_ratio,
+        nb_bands_bank=conf.hr.filter_bank.nb_bands,
+        order_filter_bank=conf.hr.filter_bank.order_filter,
+        w_trans_bank=conf.hr.filter_bank.w_trans,
+        # TODO: set according to data -> excit, acc, etc.
         smoothing_factor_noise=conf.hr.whitening.smoothing_factor,
         quantile_ratio_noise=conf.hr.whitening.quantile_ratio,
-        clip_damp=conf.hr.esprit.clip_damp,
-        discard_freq=conf.hr.esprit.discard_freq,
+        clip_damp_esm=conf.hr.esprit.clip_damp,
+        discard_freq_esm=conf.hr.esprit.discard_freq,
+        correct_alphas_noise=conf.hr.whitening.correct_alphas,
     )
     esm_excit_win, noise_excit_win, white_excit_win = decomp.perform(data_excit_win)
     esm_acc_win, noise_acc_win, white_acc_win = decomp.perform(data_acc_win)
