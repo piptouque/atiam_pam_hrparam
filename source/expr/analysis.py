@@ -52,7 +52,7 @@ def perform_analysis(
     n_fft = np.power(2, np.ceil(np.log2(len(times)))).astype(int)
     #
     # excitation_kind = "hammer"
-    excitation_kind = "wire"
+    excitation_kind = conf.excit.kind
     # excitation_kind = data_raw["excitation_kind"]
     #
     # Signals and windowed signals
@@ -160,15 +160,10 @@ def perform_analysis(
         discard_freq_esm=conf.hr.esprit.discard_freq,
         correct_alphas_noise=conf.hr.whitening.correct_alphas,
     )
-    esm_excit_win, noise_excit_win, white_excit_win = decomp.perform(data_excit_win)
     esm_acc_win, noise_acc_win, white_acc_win = decomp.perform(data_acc_win)
     esm_mic_win, noise_mic_win, white_mic_win = decomp.perform(data_mic_win)
     esm_imp_win, noise_imp_win, white_imp_win = decomp.perform(imp_win)
     # Also compute the spectra of the signals with whitened noise.
-    ft_excit_white = np.fft.fft(white_excit_win, n=n_fft)
-    ft_acc_white = np.fft.fft(white_acc_win, n=n_fft)
-    ft_mic_white = np.fft.fft(white_mic_win, n=n_fft)
-    frf_white = np.fft.fft(white_imp_win, n=n_fft)
 
     data = {
         "excitation_kind": excitation_kind,
@@ -200,20 +195,13 @@ def perform_analysis(
         "imp": {"whole": imp, "win": imp_win},
     }
     data["frequential"] = {
-        "excit": {"whole": ft_excit, "win": ft_excit_win, "white": ft_excit_white},
-        "acc": {"whole": ft_acc, "win": ft_acc_win, "white": ft_acc_white},
-        "mic": {"whole": ft_mic, "win": ft_mic_win, "white": ft_mic_white},
-        "frf": {"whole": frf, "win": frf_win, "white": frf_white},
+        "excit": {"whole": ft_excit, "win": ft_excit_win},
+        "acc": {"whole": ft_acc, "win": ft_acc_win},
+        "mic": {"whole": ft_mic, "win": ft_mic_win},
+        "frf": {"whole": frf, "win": frf_win},
     }
     data["spec"] = {"excit": spec_excit, "acc": spec_acc, "mic": spec_mic}
     data["hr"] = {
-        "excit": {
-            "win": {
-                "esm": esm_excit_win,
-                "noise": noise_excit_win,
-                "white": white_excit_win,
-            }
-        },
         "acc": {
             "win": {"esm": esm_acc_win, "noise": noise_acc_win, "white": white_acc_win}
         },
@@ -271,22 +259,17 @@ def compute_analysis_figures(
     #
     ft_excit = data["frequential"]["excit"]["whole"]
     ft_excit_win = data["frequential"]["excit"]["win"]
-    ft_excit_white = data["frequential"]["excit"]["white"]
     ft_acc = data["frequential"]["acc"]["whole"]
     ft_acc_win = data["frequential"]["acc"]["win"]
-    ft_acc_white = data["frequential"]["acc"]["white"]
     ft_mic = data["frequential"]["mic"]["whole"]
     ft_mic_win = data["frequential"]["mic"]["win"]
-    ft_mic_white = data["frequential"]["mic"]["white"]
     frf = data["frequential"]["frf"]["whole"]
     frf_win = data["frequential"]["frf"]["win"]
-    frf_white = data["frequential"]["frf"]["white"]
     #
     spec_excit = data["spec"]["excit"]
     spec_acc = data["spec"]["acc"]
     spec_mic = data["spec"]["mic"]
     #
-    esm_excit_win = data["hr"]["acc"]["win"]["esm"]
     esm_acc_win = data["hr"]["acc"]["win"]["esm"]
     esm_mic_win = data["hr"]["mic"]["win"]["esm"]
     esm_imp_win = data["hr"]["imp"]["win"]["esm"]
@@ -350,7 +333,7 @@ def compute_analysis_figures(
     ax.plot(times, sig_mic)
     ax.plot(times_mic_win, sig_mic_win, c="r")
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude (dB?)")
+    ax.set_ylabel("Amplitude")
     ax.set_xlim(time_focus_mic)
     #
     ax = fig_time.add_subplot(2, 2, 4)
@@ -358,7 +341,7 @@ def compute_analysis_figures(
     ax.plot(times_imp, imp)
     ax.plot(times_imp, imp_win, c="r")
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude (dB)")
+    ax.set_ylabel("Amplitude")
     ax.set_xlim(time_focus)
     ax.legend()
     # FREQUENTIAL RESPONSES
@@ -372,23 +355,9 @@ def compute_analysis_figures(
     ax.semilogy(
         np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_excit_win)), c="r"
     )
-    ax.semilogy(
-        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_excit_white)), c="orange"
-    )
     # Show estimated frequencies in ESM model
     amp_plot_gain = 3
     gamma_plot_gain = 6
-    for j in range(esm_excit_win.r):
-        m_line, _, _ = ax.stem(
-            esm_excit_win.nus[j] * sr,
-            amp_plot_gain * esm_excit_win.amps[j],
-            markerfmt="C2o",
-            label="Estimated frequencies",
-        )
-        plt.setp(m_line, markersize=gamma_plot_gain * esm_excit_win.gammas[j])
-    ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Force (dB[N])")
-    ax.set_xlim(freq_focus)
     # Accelerometer
     ax = fig_freq.add_subplot(3, 1, 2)
     ax.set_title("Accelerometer")
@@ -403,12 +372,6 @@ def compute_analysis_figures(
         c="r",
         label="Windowed",
     )
-    ax.semilogy(
-        np.fft.fftshift(freqs_win),
-        np.fft.fftshift(np.abs(ft_acc_white)),
-        c="orange",
-        label="Windowed and whitened",
-    )
     for j in range(esm_acc_win.r):
         # ax.axvline( esm_acc_win.nus[j] * sr, 0, amp_plot_gain * esm_acc_win.amps[j], c="orange")
         m_line, _, _ = ax.stem(
@@ -419,7 +382,7 @@ def compute_analysis_figures(
         )
         plt.setp(m_line, markersize=gamma_plot_gain * esm_acc_win.gammas[j])
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Acceleration (dB[m.s$^{-2}$]r")
+    ax.set_ylabel("Acceleration (m.s$^{-2}$")
     ax.set_xlim(freq_focus)
     #
     # Microphone
@@ -427,9 +390,6 @@ def compute_analysis_figures(
     ax.set_title("Microphone")
     ax.semilogy(np.fft.fftshift(freqs), np.fft.fftshift(np.abs(ft_mic)))
     ax.semilogy(np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_mic_win)), c="r")
-    ax.semilogy(
-        np.fft.fftshift(freqs_win), np.fft.fftshift(np.abs(ft_mic_white)), c="orange"
-    )
     for j in range(esm_mic_win.r):
         # ax.axvline( esm_mic_win.nus[j] * sr, 0, amp_plot_gain * esm_mic_win.amps[j], c="orange")
         m_line, _, _ = ax.stem(
@@ -440,7 +400,7 @@ def compute_analysis_figures(
         )
         plt.setp(m_line, markersize=gamma_plot_gain * esm_mic_win.gammas[j])
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Amplitude (dB)")
+    ax.set_ylabel("Amplitude")
     ax.set_xlim(freq_focus)
     ax.legend()
     #
@@ -460,18 +420,12 @@ def compute_analysis_figures(
         c="r",
         label="Windowed",
     )
-    ax.semilogy(
-        np.fft.fftshift(freqs_win),
-        np.fft.fftshift(np.abs(frf_white)),
-        c="y",
-        label="Windowed and whitened",
-    )
     for j in range(esm_imp_win.r):
         ax.axvline(
             esm_imp_win.nus[j] * sr, 0, amp_plot_gain * esm_imp_win.amps[j], c="orange"
         )
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Accelerance (dB)")
+    ax.set_ylabel("Accelerance")
     ax.set_xlim(freq_focus)
     # Phase
     # ax = fig_frf.add_subplot(2, 1, 2)
@@ -552,15 +506,12 @@ def save_analysis(
     data_acc_win = data["temporal"]["acc"]["win"]
     imp_win = data["temporal"]["imp"]["win"]
     #
-    esm_excit_win = data["hr"]["excit"]["win"]["esm"]
     esm_acc_win = data["hr"]["acc"]["win"]["esm"]
     esm_mic_win = data["hr"]["mic"]["win"]["esm"]
     esm_imp_win = data["hr"]["imp"]["win"]["esm"]
-    data_esm_excit_win = np.real(esm_excit_win.synth(len(times_excit_win)))
     data_esm_acc_win = np.real(esm_acc_win.synth(len(times_acc_win)))
     data_esm_mic_win = np.real(esm_mic_win.synth(len(times_mic_win)))
     data_esm_imp_win = np.real(esm_imp_win.synth(len(times_imp)))
-    data_noise_excit_win = data["hr"]["excit"]["win"]["noise"]
     data_noise_acc_win = data["hr"]["acc"]["win"]["noise"]
     data_noise_mic_win = data["hr"]["mic"]["win"]["noise"]
     data_noise_imp_win = data["hr"]["imp"]["win"]["noise"]
@@ -595,11 +546,6 @@ def save_analysis(
     wav.write(output_audio_path / "imp.wav", sr, imp / np.amax(np.abs(imp)))
     wav.write(output_audio_path / "imp_win.wav", sr, imp_win / np.amax(np.abs(imp_win)))
     wav.write(
-        output_audio_path / "excit_esm_win.wav",
-        sr,
-        data_esm_acc_win / np.amax(np.abs(data_esm_excit_win)),
-    )
-    wav.write(
         output_audio_path / "acc_esm_win.wav",
         sr,
         data_esm_acc_win / np.amax(np.abs(data_esm_acc_win)),
@@ -615,24 +561,19 @@ def save_analysis(
         data_esm_imp_win / np.amax(np.abs(data_esm_imp_win)),
     )
     wav.write(
-        output_audio_path / "excit_noise_win.wav",
-        sr,
-        data_noise_excit_win / np.amax(np.abs(data_noise_excit_win)),
-    )
-    wav.write(
         output_audio_path / "acc_noise_win.wav",
         sr,
-        data_noise_acc_win / np.amax(np.abs(data_noise_acc_win)),
+        np.real(data_noise_acc_win) / np.amax(np.abs(data_noise_acc_win)),
     )
     wav.write(
         output_audio_path / "mic_noise_win.wav",
         sr,
-        data_noise_mic_win / np.amax(np.abs(data_noise_mic_win)),
+        np.real(data_noise_mic_win) / np.amax(np.abs(data_noise_mic_win)),
     )
     wav.write(
         output_audio_path / "imp_noise_win.wav",
         sr,
-        data_noise_imp_win / np.amax(np.abs(data_noise_imp_win)),
+        np.real(data_noise_imp_win) / np.amax(np.abs(data_noise_imp_win)),
     )
     # figures
     fig_time.savefig(
@@ -659,20 +600,6 @@ def save_analysis(
     fig_frf.savefig(output_figure_img_path / "frfs.png")
     fig_spec.savefig(output_figure_img_path / "spectrogrammes.png")
     # Data in spreadsheets
-
-    df_esm_excit_win = pd.DataFrame(
-        np.stack(
-            (
-                esm_excit_win.nus * sr,
-                esm_excit_win.gammas * sr,
-                esm_excit_win.amps,
-                esm_excit_win.phis,
-            ),
-            axis=-1,
-        ),
-        index=np.arange(esm_excit_win.r),
-        columns=["f", "delta", "amp", "phi"],
-    )
     df_esm_acc_win = pd.DataFrame(
         np.stack(
             (
@@ -712,7 +639,6 @@ def save_analysis(
         index=np.arange(esm_imp_win.r),
         columns=["f", "delta", "amp", "phi"],
     )
-    df_esm_excit_win.to_csv(output_spreadsheet_path / "esm_excit_win.csv")
     df_esm_acc_win.to_csv(output_spreadsheet_path / "esm_acc_win.csv")
     df_esm_mic_win.to_csv(output_spreadsheet_path / "esm_mic_win.csv")
     df_esm_imp_win.to_csv(output_spreadsheet_path / "esm_imp_win.csv")

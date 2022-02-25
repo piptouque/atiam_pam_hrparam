@@ -1,4 +1,7 @@
 {
+    "excit": {
+        "kind": "wire"
+    },
     "win": {
         "ham": {
             "name": "boxcar",
@@ -55,7 +58,7 @@
         },
         "ester": {
             "p_max": 128,
-            "thresh_ratio": 0.1
+            "thresh_ratio": 0.16
         }
     }
 }

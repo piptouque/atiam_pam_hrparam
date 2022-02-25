@@ -82,12 +82,14 @@ class EsmSubspaceDecomposer:
             quantile_ratio=self.quantile_ratio_noise,
             smoothing_factor=self.smoothing_factor_noise,
         )
+        # FIX: works only on first band
+        nb_bands_used = 1
         if self.bank is not None:
             x_bands = self.bank.process(x_white)
             zs_list = []
             alphas_list = []
             x_esm_list = []
-            for b in range(self.bank.nb_bands):
+            for b in range(nb_bands_used):
                 x_band = x_bands[b]
                 # 2. Estimate the ESM model order on the whitened signal
                 # because ESTER does work quite as well with the whitened signal
@@ -164,7 +166,7 @@ class EsmSubspaceDecomposer:
         # TODO: Update the esm list with the corrected alphas..
         if self.bank is not None:
             x_noise_bands = np.zeros_like(x_bands)
-            for b in range(self.bank.nb_bands):
+            for b in range(nb_bands_used):
                 x_band = x_bands[b]
                 x_esm_band = x_esm_bands[b]
                 if x_esm_band is not None:
